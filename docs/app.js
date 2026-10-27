@@ -76,6 +76,7 @@ const state = {
 const synth = new SynthPlayer();
 let player = synth;
 let midiOutputList = new Map(); // name -> MIDI output
+let userChoseOutput = false; // whether the Sound dropdown was picked by hand
 
 // --- Small helpers ---
 
@@ -709,7 +710,7 @@ function onPianoClick(event) {
 
 // --- Start up ---
 
-async function start() {
+function start() {
   setStrings(parseTuning(TUNINGS["Standard"]));
   $("tuning").value = tuningLabel("Standard");
   $("tuning-preset").replaceChildren(
@@ -717,11 +718,7 @@ async function start() {
     new Option("Custom", ""),
   );
   $("tuning-preset").value = "Standard";
-
-  midiOutputList = await midiOutputs();
-  const output = $("output");
-  output.replaceChildren(new Option(BUILT_IN_SYNTH), ...[...midiOutputList.keys()].map(name => new Option(name)));
-  output.value = midiOutputList.has(WINDOWS_SYNTH) ? WINDOWS_SYNTH : BUILT_IN_SYNTH;
+  $("output").replaceChildren(new Option(BUILT_IN_SYNTH));
   $("instrument").replaceChildren(...[...INSTRUMENTS.keys()].map(name => new Option(name)));
   $("instrument").value = "Acoustic Grand Piano";
   $("family").replaceChildren(new Option(ALL_SCALES), ...[...SCALE_FAMILIES.keys()].map(name => new Option(name)));
@@ -729,6 +726,22 @@ async function start() {
 
   renderResults();
   drawVisuals();
+  connectMidi(); // not awaited: Firefox waits for permission to use MIDI, and the page works without it
+}
+
+// Add the MIDI outputs once the browser allows them. On Windows, the General MIDI synth is picked by default.
+async function connectMidi() {
+  midiOutputList = await midiOutputs();
+  if (!midiOutputList.size) return;
+  const output = $("output");
+  const previous = output.value;
+  output.replaceChildren(new Option(BUILT_IN_SYNTH), ...[...midiOutputList.keys()].map(name => new Option(name)));
+  if (!userChoseOutput && midiOutputList.has(WINDOWS_SYNTH)) {
+    output.value = WINDOWS_SYNTH;
+    setOutput(false);
+  } else {
+    output.value = previous;
+  }
 }
 
 $("analyze").addEventListener("click", analyze);
@@ -738,7 +751,10 @@ $("play-scale").addEventListener("click", playScale);
 $("notes").addEventListener("keydown", event => {
   if (event.key === "Enter") analyze();
 });
-$("output").addEventListener("change", () => setOutput());
+$("output").addEventListener("change", () => {
+  userChoseOutput = true;
+  setOutput();
+});
 $("instrument").addEventListener("change", setInstrument);
 $("tuning-preset").addEventListener("change", () => {
   if ($("tuning-preset").value) {
