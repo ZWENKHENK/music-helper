@@ -120,4 +120,5 @@ def main():
         print("  " + " -> ".join(chords[d - 1] for d in prog))
 
 
-main()
+if __name__ == "__main__":
+    main()
