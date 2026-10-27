@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Type some notes to see the chords, scales and progressions they fit, with piano and guitar guides and playback.">
+  <title>ZWENKHENK's Chordspiel</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='7' fill='%233b82f6'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main>
+    <h1>ZWENKHENK's Chordspiel</h1>
+
+    <section class="entry">
+      <div class="row">
+        <label for="notes">Notes:</label>
+        <input id="notes" class="grow" autocomplete="off" placeholder="e.g. C E G A">
+        <button id="analyze" type="button">Analyze</button>
+        <button id="clear" type="button">Clear</button>
+        <button id="play-notes" type="button">▶ Play</button>
+        <label class="check"><input id="play-on-click" type="checkbox" checked> Play on click</label>
+      </div>
+      <div class="row">
+        <label for="output">Sound:</label>
+        <select id="output"></select>
+        <label for="instrument">Instrument:</label>
+        <select id="instrument" disabled></select>
+      </div>
+      <p id="error" class="error" role="alert"></p>
+    </section>
+
+    <section class="visual">
+      <div class="scroll"><svg id="piano" role="img" aria-label="Piano keyboard"></svg></div>
+
+      <div class="row">
+        <label for="tuning">Tuning:</label>
+        <input id="tuning" list="tunings" class="tuning-input">
+        <datalist id="tunings"></datalist>
+        <span class="muted">or type your own, low to high, and press Enter</span>
+      </div>
+      <p id="tuning-error" class="error"></p>
+
+      <div class="row">
+        <span>Chord shape:</span>
+        <button id="previous-shape" type="button" class="step" aria-label="Previous shape">‹</button>
+        <span id="shape-label" class="shape-label"></span>
+        <button id="next-shape" type="button" class="step" aria-label="Next shape">›</button>
+        <button id="play-shape" type="button">▶ Play shape</button>
+      </div>
+      <div class="scroll"><svg id="guitar" role="img" aria-label="Guitar neck"></svg></div>
+
+      <div class="legend">
+        <span><i class="swatch note"></i>Your notes</span>
+        <span><i class="swatch scale"></i>Selected scale</span>
+        <span><i class="swatch chord"></i>Selected chord</span>
+        <span><i class="swatch root"></i>Root</span>
+      </div>
+      <p id="chord-status" class="muted"></p>
+    </section>
+
+    <div class="columns">
+      <section>
+        <h2>Chords that match exactly</h2>
+        <div id="exact" class="results short"></div>
+        <h2>Chords hiding inside your notes</h2>
+        <div id="inside" class="results short"></div>
+        <h2 id="scales-heading">Scales containing your notes</h2>
+        <div class="row">
+          <label for="family">Show:</label>
+          <select id="family"></select>
+        </div>
+        <select id="scale-list" class="scale-list" size="8" aria-label="Scales containing your notes"></select>
+      </section>
+
+      <section>
+        <div class="row between">
+          <h2 id="scale-title">Pick a scale to see its chords</h2>
+          <button id="play-scale" type="button">▶ Play scale</button>
+        </div>
+        <div id="details" class="results details"></div>
+      </section>
+    </div>
+  </main>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

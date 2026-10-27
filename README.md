@@ -39,6 +39,12 @@ Clicking a piano key, a fret or a chord name plays it (untick **Play on click** 
 
 Sound needs no extra libraries: MIDI goes through Windows' `winmm`, and the built-in synth uses `winsound` on Windows, `afplay` on macOS and `paplay`/`aplay` on Linux.
 
+## Web version
+
+The same app runs in a web browser, with no install, at https://zwenkhenk.github.io/music-helper/ once GitHub Pages is switched on. The page lives in `docs/`: `theory.js` is the music theory ported from `music_helper.py`, `sound.js` makes the sound, and `app.js`, `index.html` and `style.css` make the window. To try it on your own computer, serve the `docs` folder with a local web server, e.g. `python -m http.server 8000 --directory docs`, then open http://localhost:8000. Opening `index.html` straight from the disk doesn't work in Chrome or Edge, because they block its modules.
+
+The browser version uses the browser's own zoom (Ctrl + and Ctrl −) instead of the Size setting. Its built-in synth is made with the Web Audio API. Other sounds need a MIDI output that the browser can see, such as Windows' General MIDI synth. The browser may ask permission to use MIDI.
+
 ## Building the .exe
 
 ```
