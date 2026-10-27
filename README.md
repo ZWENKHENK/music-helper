@@ -1,4 +1,4 @@
-# music-helper
+# ZWENKHENK's Chordspiel
 
 Enter a set of notes and get back:
 
@@ -37,7 +37,7 @@ Clicking a piano key, a fret or a chord name plays it (untick **Play on click** 
 ```
 python -m venv .venv
 .venv\Scripts\python -m pip install pyinstaller
-.venv\Scripts\python -m PyInstaller --noconfirm --onefile --windowed --name "Music Helper" music_helper_gui.py
+.venv\Scripts\python -m PyInstaller --noconfirm --onefile --windowed --name "ZWENKHENK's Chordspiel" music_helper_gui.py
 ```
 
-The app is written to `dist\Music Helper.exe`, a single file that runs without Python installed.
+The app is written to `dist\ZWENKHENK's Chordspiel.exe`, a single file that runs without Python installed.

@@ -63,7 +63,7 @@ class Player:
     """Plays events in the background; starting a new sound cuts off the previous one."""
 
     def __init__(self):
-        self.folder = tempfile.mkdtemp(prefix="music_helper_")
+        self.folder = tempfile.mkdtemp(prefix="chordspiel_")
         atexit.register(shutil.rmtree, self.folder, ignore_errors=True)
         self.lock = threading.Lock()
         self.generation = 0

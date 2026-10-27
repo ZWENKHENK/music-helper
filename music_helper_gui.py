@@ -76,7 +76,7 @@ def chord_tag(chord):
 class MusicHelperApp(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("Music Helper")
+        self.title("ZWENKHENK's Chordspiel")
         self.minsize(760, 800)
         self.notes = set()
         self.exact, self.fits_inside = [], []
