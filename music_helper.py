@@ -1,5 +1,7 @@
 NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
-FLATS = {"Db": "C#", "Eb": "D#", "Gb": "F#", "Ab": "G#", "Bb": "A#"}
+LETTERS = "CDEFGAB"
+NATURALS = [0, 2, 4, 5, 7, 9, 11]  # semitone of each letter above C
+ACCIDENTALS = {"#": 1, "♯": 1, "b": -1, "♭": -1}
 
 # Each chord/scale is a list of steps (in semitones) above the root note
 CHORDS = {
@@ -40,27 +42,60 @@ PROGRESSIONS = [
 TRIAD_NAMES = {tuple(v): k for k, v in CHORDS.items() if len(v) == 3}
 
 
+def note_value(word):
+    """Turn a note name like 'C', 'eb', 'F#' or 'Cb' into a number 0-11."""
+    letter, accidentals = word[:1].upper(), word[1:]
+    if letter not in LETTERS or any(a not in ACCIDENTALS for a in accidentals):
+        raise ValueError(f"I don't recognise the note '{word}'")
+    return (NATURALS[LETTERS.index(letter)] + sum(ACCIDENTALS[a] for a in accidentals)) % 12
+
+
 def parse_notes(text):
     """Turn 'C E G' or 'c, eb, g' into a set of numbers."""
-    notes = set()
-    for word in text.replace(",", " ").split():
-        name = FLATS.get(word.capitalize(), word.capitalize())
-        if name not in NOTE_NAMES:
-            raise ValueError(f"I don't recognise the note '{word}'")
-        notes.add(NOTE_NAMES.index(name))
-    return notes
+    return {note_value(word) for word in text.replace(",", " ").split()}
+
+
+def spell(note, letter):
+    """Name a note using the given letter plus whatever sharps or flats it needs."""
+    offset = (note - NATURALS[LETTERS.index(letter)] + 6) % 12 - 6
+    return letter + ("#" * offset if offset > 0 else "b" * -offset)
+
+
+def spell_scale(root, name):
+    """Name each note of a 7-note scale with its own letter, e.g. F major gets Bb rather than A#.
+
+    Tries every way of naming the root (e.g. A# or Bb) and keeps the one with the fewest accidentals.
+    Returns a dict of note number -> name.
+    """
+    best = None
+    for start, letter in enumerate(LETTERS):
+        if len(spell(root, letter)) > 2:  # root would need a double sharp/flat
+            continue
+        names = [spell((root + s) % 12, LETTERS[(start + i) % 7]) for i, s in enumerate(SCALES[name])]
+        accidentals = sum(len(n) - 1 for n in names)
+        if best is None or accidentals < best[0]:
+            best = (accidentals, names)
+    return {(root + s) % 12: n for s, n in zip(SCALES[name], best[1])}
+
+
+def chord_notes(root, quality):
+    return [(root + s) % 12 for s in CHORDS[quality]]
+
+
+def chord_label(root, quality, names=NOTE_NAMES):
+    return f"{names[root]} {quality}"
 
 
 def find_chords(notes):
+    """Return (exact, fits_inside) lists of (root, quality) chords."""
     exact, fits_inside = [], []
     for root in range(12):
-        for name, steps in CHORDS.items():
-            chord = {(root + s) % 12 for s in steps}
-            label = f"{NOTE_NAMES[root]} {name}"
+        for quality in CHORDS:
+            chord = set(chord_notes(root, quality))
             if chord == notes:
-                exact.append(label)
+                exact.append((root, quality))
             elif chord < notes:  # every chord note is in your notes
-                fits_inside.append(label)
+                fits_inside.append((root, quality))
     return exact, fits_inside
 
 
@@ -75,14 +110,13 @@ def find_scales(notes):
 
 
 def scale_chords(root, name):
-    """Build a triad on every note of the scale by stacking thirds."""
+    """Build a triad on every note of the scale by stacking thirds, as (root, quality) pairs."""
     scale = [(root + s) % 12 for s in SCALES[name]]
     chords = []
     for i in range(len(scale)):
         triad = [scale[i], scale[(i + 2) % 7], scale[(i + 4) % 7]]
         shape = tuple((n - triad[0]) % 12 for n in triad)
-        quality = TRIAD_NAMES.get(shape, "?")
-        chords.append(f"{NOTE_NAMES[triad[0]]} {quality}")
+        chords.append((triad[0], TRIAD_NAMES[shape]))
     return chords
 
 
@@ -95,8 +129,8 @@ def main():
         return
 
     exact, fits_inside = find_chords(notes)
-    print("\nChords that match exactly:", exact or "none")
-    print("Chords hiding inside your notes:", fits_inside or "none")
+    print("\nChords that match exactly:", [chord_label(*c) for c in exact] or "none")
+    print("Chords hiding inside your notes:", [chord_label(*c) for c in fits_inside] or "none")
 
     scales = find_scales(notes)
     if not scales:
@@ -105,13 +139,14 @@ def main():
 
     print("\nScales/modes that contain all your notes:")
     for number, (root, name) in enumerate(scales, start=1):
-        print(f"  {number}. {NOTE_NAMES[root]} {name}")
+        print(f"  {number}. {spell_scale(root, name)[root]} {name}")
 
     choice = int(input("\nPick one for chords and progressions: "))
     root, name = scales[choice - 1]
-    chords = scale_chords(root, name)
+    spelling = spell_scale(root, name)
+    chords = [chord_label(r, q, spelling) for r, q in scale_chords(root, name)]
 
-    print(f"\nChords in {NOTE_NAMES[root]} {name}:")
+    print(f"\nChords in {spelling[root]} {name}:")
     for degree, chord in enumerate(chords, start=1):
         print(f"  {degree}: {chord}")
 
