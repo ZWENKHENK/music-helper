@@ -25,6 +25,10 @@ Type notes, or click keys on the piano or frets on the guitar neck to toggle the
 
 The guitar neck's tuning can be changed from the dropdown above it (standard, drop D, DADGAD, open tunings, 7-string, bass and more), or type your own from low string to high, e.g. `C G C F A D`, and press Enter. Anything from 4 to 8 strings works.
 
+### Size
+
+The **Size** dropdown (next to Sound) scales the whole window from 75% to 200%, on top of Windows' own display scaling. **Ctrl +** and **Ctrl −** step through the sizes and **Ctrl 0** goes back to 100%. The choice is remembered in `%APPDATA%\Chordspiel\settings.json`.
+
 ### Chord shapes
 
 When a chord is selected, the guitar neck shows a playable shape for it in the current tuning, written the usual way (e.g. `x 3 2 0 1 0`, low string first). Use **‹ ›** to step through the shapes up the neck, or to "every position" to see all the chord's notes, and **▶ Play shape** to hear it strummed. Shapes are worked out for whatever tuning is set: the root is the lowest note, there are no muted strings in the middle, the stretch is at most four frets, and at most four fingers are needed (a barre counts as one).

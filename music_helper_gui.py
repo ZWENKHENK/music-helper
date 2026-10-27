@@ -1,6 +1,9 @@
 import ctypes
+import json
+import os
 import time
 import tkinter as tk
+from tkinter import font as tkfont
 from tkinter import ttk
 
 from music_helper import (
@@ -72,6 +75,41 @@ CHORD_HINT = "Click a chord name to show it on the piano and guitar."
 ALL_SCALES = "All scales"
 BUILT_IN_SYNTH = "Built-in synth"
 WINDOWS_SYNTH = "Microsoft GS Wavetable Synth"  # Windows' own General MIDI synth, used by default when present
+
+# The Size setting, on top of Windows' own display scaling
+SIZES = [0.75, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0]
+# Tk's built-in fonts, which the standard widgets use; resized with the Size setting
+SCALED_FONTS = ["TkDefaultFont", "TkTextFont", "TkFixedFont", "TkMenuFont", "TkHeadingFont",
+                "TkCaptionFont", "TkSmallCaptionFont", "TkIconFont", "TkTooltipFont"]
+SETTINGS_FILE = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "Chordspiel", "settings.json")
+
+
+def load_settings():
+    try:
+        with open(SETTINGS_FILE, encoding="utf-8") as file:
+            return json.load(file)
+    except (OSError, ValueError):
+        return {}
+
+
+def save_settings(settings):
+    try:
+        os.makedirs(os.path.dirname(SETTINGS_FILE), exist_ok=True)
+        with open(SETTINGS_FILE, "w", encoding="utf-8") as file:
+            json.dump(settings, file)
+    except OSError:
+        pass  # not being able to remember the setting isn't worth bothering anyone about
+
+
+def use_sharp_text():
+    """Tell Windows the app handles high-resolution screens itself, so it isn't blurrily stretched.
+
+    Must run before the window is created.
+    """
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(1)
+    except (AttributeError, OSError):
+        pass
 PIANO_START = 60  # the piano's lowest C is middle C
 LOWEST_STRING = 40  # E2, a guitar's low E; other tunings put their lowest string as near to this as possible
 CHORD_LENGTH, SCALE_STEP, PROGRESSION_STEP = 1.6, 0.3, 0.9  # seconds
@@ -83,9 +121,19 @@ def chord_tag(chord):
 
 class MusicHelperApp(tk.Tk):
     def __init__(self):
+        use_sharp_text()
         super().__init__()
         self.title("ZWENKHENK's Chordspiel")
-        self.minsize(760, 800)
+        self.settings = load_settings()
+        size = self.settings.get("size", 1.0)
+        self.size = size if isinstance(size, (int, float)) and 0.5 <= size <= 3 else 1.0  # the Size setting
+        self.dpi_scale = self.winfo_fpixels("1i") / 96  # Windows display scaling, e.g. 1.5 at 150%
+        family = tkfont.nametofont("TkDefaultFont").cget("family")
+        self.heading_font = tkfont.Font(self, family=family, size=10, weight="bold")
+        self.bold_font = tkfont.Font(self, family=family, size=9, weight="bold")
+        # (font, its size at 100%) for every font the Size setting resizes
+        self.base_font_sizes = [(tkfont.nametofont(name), tkfont.nametofont(name).cget("size")) for name in SCALED_FONTS]
+        self.base_font_sizes += [(self.heading_font, 10), (self.bold_font, 9)]
         self.notes = set()
         self.exact, self.fits_inside = [], []
         self.all_scales = []  # every scale containing the notes
@@ -105,7 +153,7 @@ class MusicHelperApp(tk.Tk):
         self.play_on_click = tk.BooleanVar(value=True)
         self.setup_theme()
 
-        main = ttk.Frame(self, padding=12)
+        main = self.main = ttk.Frame(self)
         main.pack(fill="both", expand=True)
         main.columnconfigure(0, weight=1)
         main.columnconfigure(1, weight=1)
@@ -140,11 +188,21 @@ class MusicHelperApp(tk.Tk):
                                            values=list(INSTRUMENTS), height=25)
         self.instrument_box.pack(side="left")
         self.instrument_box.bind("<<ComboboxSelected>>", lambda e: self.set_instrument())
+        ttk.Label(sound_row, text="Size:").pack(side="left", padx=(14, 6))
+        self.size_var = tk.StringVar()
+        size_box = ttk.Combobox(sound_row, textvariable=self.size_var, state="readonly", width=6,
+                                values=[f"{round(s * 100)}%" for s in SIZES])
+        size_box.pack(side="left")
+        size_box.bind("<<ComboboxSelected>>", lambda e: self.set_size(SIZES[size_box.current()]))
+        for keys, step in [("<Control-plus>", 1), ("<Control-equal>", 1), ("<Control-KP_Add>", 1),
+                           ("<Control-minus>", -1), ("<Control-KP_Subtract>", -1)]:
+            self.bind_all(keys, lambda e, s=step: self.step_size(s))
+        self.bind_all("<Control-0>", lambda e: self.set_size(1.0))
 
         self.error_var = tk.StringVar()
         ttk.Label(main, textvariable=self.error_var, foreground=ERROR).grid(row=1, column=0, columnspan=2, sticky="w", pady=4)
 
-        self.piano = tk.Canvas(main, width=WHITE_W * 7 * OCTAVES + 1, height=WHITE_H + 1, bg=BG, highlightthickness=0, cursor="hand2")
+        self.piano = tk.Canvas(main, bg=BG, highlightthickness=0, cursor="hand2")
         self.piano.grid(row=2, column=0, columnspan=2, pady=(0, 10))
 
         guitar_frame = ttk.Frame(main)
@@ -176,17 +234,19 @@ class MusicHelperApp(tk.Tk):
         self.tuning_error_var = tk.StringVar()
         ttk.Label(tuning_row, textvariable=self.tuning_error_var, foreground=ERROR).pack(side="left", padx=(8, 0))
 
-        self.guitar = tk.Canvas(guitar_frame, width=NUT_X + FRET_W * FRETS + 10, bg=BG, highlightthickness=0, cursor="hand2")
+        self.guitar = tk.Canvas(guitar_frame, bg=BG, highlightthickness=0, cursor="hand2")
         self.guitar.pack()
         self.guitar.bind("<Button-1>", self.on_guitar_click)
 
         legend = ttk.Frame(main)
         legend.grid(row=4, column=0, columnspan=2)
+        self.swatches = []
         for color, text in [(NOTE_COLOR, "Your notes"), (SCALE_COLOR, "Selected scale"),
                             (CHORD_COLOR, "Selected chord"), (ROOT_COLOR, "Root")]:
-            swatch = tk.Canvas(legend, width=14, height=14, bg=BG, highlightthickness=0)
+            swatch = tk.Canvas(legend, bg=BG, highlightthickness=0)
             swatch.create_oval(2, 2, 12, 12, fill=color, outline="")
             swatch.pack(side="left", padx=(10, 4))
+            self.swatches.append(swatch)
             ttk.Label(legend, text=text).pack(side="left")
 
         self.chord_status_var = tk.StringVar(value=CHORD_HINT)
@@ -234,7 +294,7 @@ class MusicHelperApp(tk.Tk):
         self.scale_title_var = tk.StringVar(value="Pick a scale to see its chords")
         ttk.Label(right, textvariable=self.scale_title_var, style="Heading.TLabel").grid(row=0, column=0, sticky="w")
         ttk.Button(right, text="▶ Play scale", command=self.play_scale).grid(row=0, column=1, sticky="e", pady=(0, 4))
-        self.details = self.make_text(right, height=8, bg=PANEL, padx=8, pady=6, tabs=("64",),
+        self.details = self.make_text(right, height=8, bg=PANEL, padx=8, pady=6,
                                       highlightthickness=1, highlightbackground=BORDER, highlightcolor=BORDER)
         self.details.grid(row=1, column=0, columnspan=2, sticky="nsew")
         details_scroll = ttk.Scrollbar(right, orient="vertical", command=self.details.yview)
@@ -243,7 +303,7 @@ class MusicHelperApp(tk.Tk):
 
         self.chord_texts = [self.exact_text, self.inside_text, self.details]
         self.render_results()
-        self.draw_visuals()
+        self.apply_size()
         self.use_dark_title_bar()
         self.set_output(preview=False)
         self.protocol("WM_DELETE_WINDOW", self.on_close)
@@ -253,6 +313,45 @@ class MusicHelperApp(tk.Tk):
         self.player.close()
         self.destroy()
 
+    # --- Size ---
+
+    def scale(self):
+        """How many screen pixels one pixel of the drawings takes up: display scaling times the Size setting."""
+        return self.dpi_scale * self.size
+
+    def px(self, value):
+        return round(value * self.scale())
+
+    def canvas_font(self, size, weight="normal"):
+        # Point sizes already follow Windows' display scaling, so only the Size setting applies
+        return ("", max(1, round(size * self.size)), weight)
+
+    def set_size(self, size):
+        self.size = size
+        self.settings["size"] = size
+        save_settings(self.settings)
+        self.apply_size()
+
+    def step_size(self, step):
+        nearest = min(range(len(SIZES)), key=lambda i: abs(SIZES[i] - self.size))
+        self.set_size(SIZES[max(0, min(len(SIZES) - 1, nearest + step))])
+
+    def apply_size(self):
+        """Resize fonts, spacing and the drawings for the current Size, then fit the window to them."""
+        self.size_var.set(f"{round(self.size * 100)}%")
+        for font, base in self.base_font_sizes:
+            font.configure(size=round(base * self.size))
+        self.main.configure(padding=self.px(12))
+        ttk.Style(self).configure("TButton", padding=(self.px(10), self.px(3)))
+        self.details.configure(tabs=(self.px(64),))
+        for swatch in self.swatches:
+            swatch.configure(width=self.px(14), height=self.px(14))
+            swatch.coords("all", self.px(2), self.px(2), self.px(12), self.px(12))
+        self.draw_visuals()
+        # Keep the layout from being squeezed, without asking for more than the screen has
+        self.minsize(min(self.px(760), self.winfo_screenwidth()), min(self.px(780), self.winfo_screenheight() - 80))
+        self.geometry("")  # let the window grow or shrink to fit
+
     # --- Theme ---
 
     def setup_theme(self):
@@ -261,7 +360,7 @@ class MusicHelperApp(tk.Tk):
         style.theme_use("clam")  # the native Windows theme ignores most colour settings
         style.configure(".", background=BG, foreground=FG, bordercolor=BORDER, focuscolor=BG,
                         troughcolor=BG, selectbackground=NOTE_COLOR, selectforeground="white")
-        style.configure("Heading.TLabel", font=("", 10, "bold"))
+        style.configure("Heading.TLabel", font=self.heading_font)
         style.configure("TButton", background=PANEL, lightcolor=PANEL, darkcolor=PANEL, padding=(10, 3))
         style.map("TButton", background=[("pressed", BORDER), ("active", HOVER)], foreground=[("disabled", MUTED)])
         for widget in ("TEntry", "TCombobox"):
@@ -389,8 +488,8 @@ class MusicHelperApp(tk.Tk):
     def make_text(self, parent, **options):
         text = tk.Text(parent, wrap="word", state="disabled", relief="flat", width=1, cursor="arrow",
                        font="TkDefaultFont", fg=FG, selectbackground=NOTE_COLOR, **options)
-        text.tag_configure("heading", font=("", 10, "bold"))
-        text.tag_configure("bold", font=("", 9, "bold"))
+        text.tag_configure("heading", font=self.heading_font)
+        text.tag_configure("bold", font=self.bold_font)
         text.tag_configure("muted", foreground=MUTED)
         text.tag_configure("chord", foreground=LINK)
         text.tag_bind("chord", "<Enter>", lambda e: text.config(cursor="hand2"))
@@ -714,7 +813,7 @@ class MusicHelperApp(tk.Tk):
             fill, is_root = self.note_style(note)
             key = c.create_rectangle(x, 0, x + WHITE_W, WHITE_H, fill=fill or "#ececec", outline=BG)
             label = c.create_text(x + WHITE_W / 2, WHITE_H - 14, text=self.name(note),
-                                  fill=TEXT_ON.get(fill, "#555"), font=("", 9, "bold" if fill else "normal"))
+                                  fill=TEXT_ON.get(fill, "#555"), font=self.canvas_font(9, "bold" if fill else "normal"))
             items = [key, label]
             if is_root:
                 items.append(c.create_oval(x + WHITE_W / 2 - 5, WHITE_H - 40, x + WHITE_W / 2 + 5, WHITE_H - 30, fill=ROOT_COLOR, outline=""))
@@ -731,11 +830,15 @@ class MusicHelperApp(tk.Tk):
             items = [key]
             if fill:
                 items.append(c.create_text(x + BLACK_W / 2, BLACK_H - 12, text=self.name(note),
-                                           fill=TEXT_ON[fill], font=("", 7, "bold")))
+                                           fill=TEXT_ON[fill], font=self.canvas_font(7, "bold")))
             if is_root:
                 items.append(c.create_oval(x + BLACK_W / 2 - 4, BLACK_H - 34, x + BLACK_W / 2 + 4, BLACK_H - 26, fill=ROOT_COLOR, outline=""))
             for item in items:
                 c.tag_bind(item, "<Button-1>", lambda e, n=note, p=PIANO_START + 12 * (i // 7) + note: self.press(n, p))
+
+        # Drawn at 1x, then scaled up to the screen and Size setting
+        c.scale("all", 0, 0, self.scale(), self.scale())
+        c.configure(width=self.px(WHITE_W * 7 * OCTAVES + 1), height=self.px(WHITE_H + 1))
 
     def fret_x(self, fret):
         """Centre x of a fret position; fret 0 (open string) sits left of the nut."""
@@ -745,7 +848,7 @@ class MusicHelperApp(tk.Tk):
         c = self.guitar
         c.delete("all")
         bottom = TOP + STRING_GAP * (len(self.strings) - 1)
-        c.config(height=bottom + 40)
+        c.configure(width=self.px(NUT_X + FRET_W * FRETS + 10), height=self.px(bottom + 40))
         right = NUT_X + FRET_W * FRETS
         c.create_rectangle(NUT_X, TOP, right, bottom, fill="#5c4330", outline="")
 
@@ -759,19 +862,19 @@ class MusicHelperApp(tk.Tk):
 
         for fret in range(FRETS + 1):
             x = NUT_X + fret * FRET_W
-            c.create_line(x, TOP, x, bottom, fill="#d4d4d4" if fret == 0 else "#9ca3af", width=5 if fret == 0 else 2)
+            c.create_line(x, TOP, x, bottom, fill="#d4d4d4" if fret == 0 else "#9ca3af", width=self.px(5 if fret == 0 else 2))
             if fret:
-                c.create_text(self.fret_x(fret), bottom + 22, text=str(fret), fill=MUTED, font=("", 8))
+                c.create_text(self.fret_x(fret), bottom + 22, text=str(fret), fill=MUTED, font=self.canvas_font(8))
 
         shape = self.current_shape()
         for s, open_note in enumerate(self.strings):
             y = TOP + s * STRING_GAP
-            c.create_line(NUT_X, y, right, y, fill="#d1d5db", width=1 + s * 0.4)
+            c.create_line(NUT_X, y, right, y, fill="#d1d5db", width=(1 + s * 0.4) * self.scale())
             if shape:
                 # Only the shape: one dot per string, or a cross on a muted string
                 fret = shape[-1 - s]  # shapes run low string first, the neck high string first
                 if fret is None:
-                    c.create_text(NUT_X / 2, y, text="✕", fill=MUTED, font=("", 11, "bold"))
+                    c.create_text(NUT_X / 2, y, text="✕", fill=MUTED, font=self.canvas_font(11, "bold"))
                     continue
                 if fret:
                     self.draw_open_string(y, open_note)
@@ -785,21 +888,23 @@ class MusicHelperApp(tk.Tk):
                     self.draw_dot(self.fret_x(fret), y, note, fill, is_root)
                 elif fret == 0:
                     self.draw_open_string(y, note)
+        c.scale("all", 0, 0, self.scale(), self.scale())
 
     def draw_dot(self, x, y, note, fill, is_root):
-        self.guitar.create_oval(x - 10, y - 10, x + 10, y + 10, fill=fill, outline=ROOT_COLOR if is_root else "", width=3)
-        self.guitar.create_text(x, y, text=self.name(note), font=("", 7, "bold"), fill=TEXT_ON[fill])
+        self.guitar.create_oval(x - 10, y - 10, x + 10, y + 10, fill=fill, outline=ROOT_COLOR if is_root else "", width=self.px(3))
+        self.guitar.create_text(x, y, text=self.name(note), font=self.canvas_font(7, "bold"), fill=TEXT_ON[fill])
 
     def draw_open_string(self, y, note):
         """A grey name left of the nut, so the tuning is always visible."""
         self.guitar.create_oval(NUT_X / 2 - 10, y - 10, NUT_X / 2 + 10, y + 10, fill=PANEL, outline=BORDER)
-        self.guitar.create_text(NUT_X / 2, y, text=self.name(note), font=("", 7), fill=MUTED)
+        self.guitar.create_text(NUT_X / 2, y, text=self.name(note), font=self.canvas_font(7), fill=MUTED)
 
     def on_guitar_click(self, event):
-        s = round((event.y - TOP) / STRING_GAP)
+        x, y = event.x / self.scale(), event.y / self.scale()  # back to 1x drawing coordinates
+        s = round((y - TOP) / STRING_GAP)
         if not 0 <= s < len(self.strings):
             return
-        fret = 0 if event.x < NUT_X else int((event.x - NUT_X) // FRET_W) + 1
+        fret = 0 if x < NUT_X else int((x - NUT_X) // FRET_W) + 1
         if fret > FRETS:
             return
         self.press((self.strings[s] + fret) % 12, self.string_pitches[s] + fret)
