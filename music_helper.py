@@ -1,3 +1,5 @@
+import itertools
+
 NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 LETTERS = "CDEFGAB"
 NATURALS = [0, 2, 4, 5, 7, 9, 11]  # semitone of each letter above C
@@ -118,6 +120,68 @@ def scale_chords(root, name):
         shape = tuple((n - triad[0]) % 12 for n in triad)
         chords.append((triad[0], TRIAD_NAMES[shape]))
     return chords
+
+
+def is_playable(shape, tuning, root, required, min_strings, span):
+    sounding = [i for i, f in enumerate(shape) if f is not None]
+    if len(sounding) < min_strings or sounding[-1] - sounding[0] + 1 != len(sounding):
+        return False  # too few strings, or a muted string in the middle
+    notes = [(tuning[i] + shape[i]) % 12 for i in sounding]
+    if notes[0] != root or not required <= set(notes):
+        return False
+    fretted = [f for f in shape if f]
+    if not fretted:
+        return True
+    low, high = min(fretted), max(fretted)
+    if high - low > span or (0 in shape and high > 4):
+        return False  # too much of a stretch, or open strings far from the nut
+    # The lowest fret can be a barre if it's on several strings with no open string in between
+    barre = [i for i, f in enumerate(shape) if f == low]
+    if len(barre) > 1 and 0 not in shape[barre[0]:barre[-1] + 1]:
+        fingers = 1 + sum(f > low for f in fretted)
+    else:
+        fingers = len(fretted)
+    return fingers <= 4
+
+
+def guitar_shapes(tuning, root, quality, frets=12, span=3):
+    """Find practical shapes for a chord on a fretted instrument.
+
+    `tuning` lists the open-string notes from the lowest string up. Each shape is a tuple with
+    a fret per string in the same order (0 = open, None = muted). Shapes have the root in the
+    bass, every chord note (the 5th may be left out of four-note chords), no muted strings
+    between sounding ones, a stretch of at most `span` frets, and need at most four fingers.
+    Shapes are sorted from the nut up (fuller and lower shapes first at each position), and ones
+    that are just a fuller shape minus some strings are left out.
+    """
+    tones = set(chord_notes(root, quality))
+    required = set(tones)
+    if len(tones) == 4 and 7 in CHORDS[quality]:
+        required.discard((root + 7) % 12)
+    min_strings = min(4, len(tuning) - 1)
+
+    found = set()
+    for low in range(1, frets - span + 1):
+        window = [0, *range(low, low + span + 1)]
+        options = [[None] + [f for f in window if (open_note + f) % 12 in tones] for open_note in tuning]
+        for shape in itertools.product(*options):
+            if is_playable(shape, tuning, root, required, min_strings, span):
+                found.add(shape)
+
+    def contained_in(shape, other):
+        return shape != other and all(f is None or other[i] == f for i, f in enumerate(shape))
+
+    shapes = [s for s in found if not any(contained_in(s, other) for other in found)]
+    def sort_key(shape):
+        played = [f for f in shape if f is not None]
+        return min(played), -len(played), sum(played)
+
+    return sorted(shapes, key=sort_key)
+
+
+def shape_text(shape):
+    """Write a shape the usual way, e.g. 'x 3 2 0 1 0'."""
+    return " ".join("x" if f is None else str(f) for f in shape)
 
 
 def main():

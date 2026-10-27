@@ -11,6 +11,8 @@ from music_helper import (
     find_scales,
     parse_notes,
     scale_chords,
+    guitar_shapes,
+    shape_text,
     spell_scale,
 )
 from sound import Player, voice
@@ -80,6 +82,9 @@ class MusicHelperApp(tk.Tk):
         self.selected_chord = None  # (root, quality)
         self.spelling = {}  # note number -> name, from the selected scale
         self.set_strings(self.parse_tuning(TUNINGS["Standard"]))
+        self.shapes = []  # guitar shapes for the selected chord, low string first
+        self.shape_index = None  # which shape is on the neck; None shows every position
+        self.shapes_key = None  # (chord, tuning) the shapes were found for
         self.player = Player()
         self.play_on_click = tk.BooleanVar(value=True)
         self.setup_theme()
@@ -124,8 +129,21 @@ class MusicHelperApp(tk.Tk):
         tuning_box.bind("<Return>", lambda e: self.set_tuning())
         ttk.Label(tuning_row, text="or type your own, low to high, and press Enter",
                   foreground=MUTED).pack(side="left", padx=(8, 0))
+        shape_row = ttk.Frame(guitar_frame)
+        shape_row.pack(anchor="w", pady=(0, 4))
+        ttk.Label(shape_row, text="Chord shape:").pack(side="left", padx=(0, 6))
+        previous_shape = ttk.Button(shape_row, text="‹", width=3, command=lambda: self.step_shape(-1))
+        previous_shape.pack(side="left")
+        self.shape_var = tk.StringVar()
+        ttk.Label(shape_row, textvariable=self.shape_var, width=40, anchor="center").pack(side="left", padx=6)
+        next_shape = ttk.Button(shape_row, text="›", width=3, command=lambda: self.step_shape(1))
+        next_shape.pack(side="left")
+        play_shape = ttk.Button(shape_row, text="▶ Play shape", command=self.play_shape)
+        play_shape.pack(side="left", padx=(6, 0))
+        self.shape_buttons = [previous_shape, next_shape, play_shape]
+
         self.tuning_error_var = tk.StringVar()
-        ttk.Label(guitar_frame, textvariable=self.tuning_error_var, foreground=ERROR).pack(anchor="w")
+        ttk.Label(tuning_row, textvariable=self.tuning_error_var, foreground=ERROR).pack(side="left", padx=(8, 0))
 
         self.guitar = tk.Canvas(guitar_frame, width=NUT_X + FRET_W * FRETS + 10, bg=BG, highlightthickness=0, cursor="hand2")
         self.guitar.pack()
@@ -195,7 +213,7 @@ class MusicHelperApp(tk.Tk):
                         troughcolor=BG, selectbackground=NOTE_COLOR, selectforeground="white")
         style.configure("Heading.TLabel", font=("", 10, "bold"))
         style.configure("TButton", background=PANEL, lightcolor=PANEL, darkcolor=PANEL, padding=(10, 3))
-        style.map("TButton", background=[("pressed", BORDER), ("active", HOVER)])
+        style.map("TButton", background=[("pressed", BORDER), ("active", HOVER)], foreground=[("disabled", MUTED)])
         for widget in ("TEntry", "TCombobox"):
             style.configure(widget, fieldbackground=PANEL, background=PANEL, insertcolor=FG,
                             lightcolor=PANEL, darkcolor=PANEL, arrowcolor=FG)
@@ -363,10 +381,10 @@ class MusicHelperApp(tk.Tk):
 
     def select_chord(self, chord):
         self.selected_chord = None if chord == self.selected_chord else chord
-        if self.selected_chord and self.play_on_click.get():
-            self.play_progression([chord])
         self.update_chord_highlight()
         self.draw_visuals()
+        if self.selected_chord and self.play_on_click.get():
+            self.play_shape()
 
     def update_chord_highlight(self):
         selected = chord_tag(self.selected_chord) if self.selected_chord else None
@@ -380,6 +398,55 @@ class MusicHelperApp(tk.Tk):
             self.chord_status_var.set(f"Showing {self.chord_name(self.selected_chord)}: {names}. Click it again to hide.")
         else:
             self.chord_status_var.set(CHORD_HINT)
+        self.update_shapes()
+
+    # --- Guitar chord shapes ---
+
+    def update_shapes(self):
+        """Find shapes for the selected chord in the current tuning, starting again at the first one."""
+        key = (self.selected_chord, tuple(self.strings))
+        if key == self.shapes_key:
+            return
+        self.shapes_key = key
+        self.shapes = guitar_shapes(self.strings[::-1], *self.selected_chord, frets=FRETS) if self.selected_chord else []
+        self.shape_index = 0 if self.shapes else None
+        self.update_shape_label()
+
+    def current_shape(self):
+        return None if self.shape_index is None else self.shapes[self.shape_index]
+
+    def update_shape_label(self):
+        if not self.selected_chord:
+            text = "click a chord name to see guitar shapes"
+        elif not self.shapes:
+            text = f"no practical {self.chord_name(self.selected_chord)} shapes in this tuning"
+        elif self.shape_index is None:
+            text = f"{self.chord_name(self.selected_chord)}: every position"
+        else:
+            shape = shape_text(self.current_shape())
+            text = f"{self.chord_name(self.selected_chord)}:  {shape}   ({self.shape_index + 1} of {len(self.shapes)})"
+        self.shape_var.set(text)
+        for button in self.shape_buttons:
+            button.state(["!disabled"] if self.shapes else ["disabled"])
+
+    def step_shape(self, step):
+        """Move through the shapes, with 'every position' between the last and the first."""
+        positions = [None, *range(len(self.shapes))]
+        self.shape_index = positions[(positions.index(self.shape_index) + step) % len(positions)]
+        self.update_shape_label()
+        self.draw_guitar()
+        if self.shape_index is not None and self.play_on_click.get():
+            self.play_shape()
+
+    def play_shape(self):
+        """Strum the shape on the neck from the low string up, or play the chord if no shape is shown."""
+        shape = self.current_shape()
+        if not shape:
+            if self.selected_chord:
+                self.play_progression([self.selected_chord])
+            return
+        pitches = [p + f for p, f in zip(self.string_pitches[::-1], shape) if f is not None]
+        self.player.play([(j * 0.04, p, CHORD_LENGTH) for j, p in enumerate(pitches)])
 
     # --- Playback ---
 
@@ -433,6 +500,7 @@ class MusicHelperApp(tk.Tk):
             self.tuning_error_var.set(str(error))
             return
         self.tuning_error_var.set("")
+        self.update_shapes()
         self.draw_guitar()
 
     def set_strings(self, strings, lowest=LOWEST_STRING):
@@ -528,21 +596,37 @@ class MusicHelperApp(tk.Tk):
             if fret:
                 c.create_text(self.fret_x(fret), bottom + 22, text=str(fret), fill=MUTED, font=("", 8))
 
+        shape = self.current_shape()
         for s, open_note in enumerate(self.strings):
             y = TOP + s * STRING_GAP
             c.create_line(NUT_X, y, right, y, fill="#d1d5db", width=1 + s * 0.4)
+            if shape:
+                # Only the shape: one dot per string, or a cross on a muted string
+                fret = shape[-1 - s]  # shapes run low string first, the neck high string first
+                if fret is None:
+                    c.create_text(NUT_X / 2, y, text="✕", fill=MUTED, font=("", 11, "bold"))
+                    continue
+                if fret:
+                    self.draw_open_string(y, open_note)
+                note = (open_note + fret) % 12
+                self.draw_dot(self.fret_x(fret), y, note, CHORD_COLOR, note == self.selected_chord[0])
+                continue
             for fret in range(FRETS + 1):
                 note = (open_note + fret) % 12
                 fill, is_root = self.note_style(note)
-                if not fill:
-                    if fret == 0:  # always show the open string's name so the tuning is visible
-                        c.create_oval(NUT_X / 2 - 10, y - 10, NUT_X / 2 + 10, y + 10, fill=PANEL, outline=BORDER)
-                        c.create_text(NUT_X / 2, y, text=self.name(note), font=("", 7), fill=MUTED)
-                    continue
-                x = self.fret_x(fret)
-                c.create_oval(x - 10, y - 10, x + 10, y + 10, fill=fill,
-                              outline=ROOT_COLOR if is_root else "", width=3)
-                c.create_text(x, y, text=self.name(note), font=("", 7, "bold"), fill=TEXT_ON[fill])
+                if fill:
+                    self.draw_dot(self.fret_x(fret), y, note, fill, is_root)
+                elif fret == 0:
+                    self.draw_open_string(y, note)
+
+    def draw_dot(self, x, y, note, fill, is_root):
+        self.guitar.create_oval(x - 10, y - 10, x + 10, y + 10, fill=fill, outline=ROOT_COLOR if is_root else "", width=3)
+        self.guitar.create_text(x, y, text=self.name(note), font=("", 7, "bold"), fill=TEXT_ON[fill])
+
+    def draw_open_string(self, y, note):
+        """A grey name left of the nut, so the tuning is always visible."""
+        self.guitar.create_oval(NUT_X / 2 - 10, y - 10, NUT_X / 2 + 10, y + 10, fill=PANEL, outline=BORDER)
+        self.guitar.create_text(NUT_X / 2, y, text=self.name(note), font=("", 7), fill=MUTED)
 
     def on_guitar_click(self, event):
         s = round((event.y - TOP) / STRING_GAP)

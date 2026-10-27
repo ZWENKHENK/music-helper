@@ -24,6 +24,10 @@ Type notes, or click keys on the piano or frets on the guitar neck to toggle the
 
 The guitar neck's tuning can be changed from the dropdown above it (standard, drop D, DADGAD, open tunings, 7-string, bass and more), or type your own from low string to high, e.g. `C G C F A D`, and press Enter. Anything from 4 to 8 strings works.
 
+### Chord shapes
+
+When a chord is selected, the guitar neck shows a playable shape for it in the current tuning, written the usual way (e.g. `x 3 2 0 1 0`, low string first). Use **‹ ›** to step through the shapes up the neck, or to "every position" to see all the chord's notes, and **▶ Play shape** to hear it strummed. Shapes are worked out for whatever tuning is set: the root is the lowest note, there are no muted strings in the middle, the stretch is at most four frets, and at most four fingers are needed (a barre counts as one).
+
 ### Sound
 
 Clicking a piano key, a fret or a chord name plays it (untick **Play on click** to turn that off). **▶ Play** plays your notes, **▶ Play scale** plays the selected scale, and the ▶ in front of each progression plays it. Sound needs no extra libraries: it uses `winsound` on Windows, `afplay` on macOS and `paplay`/`aplay` on Linux.
