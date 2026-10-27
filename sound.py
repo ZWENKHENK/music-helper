@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import wave
 from array import array
 from functools import lru_cache
@@ -67,13 +68,16 @@ class Player:
         atexit.register(shutil.rmtree, self.folder, ignore_errors=True)
         self.lock = threading.Lock()
         self.generation = 0
+        self.started = (0, 0.0)  # (generation, time.monotonic()) of the sound that last started playing
         self.process = None
 
     def play(self, events):
+        """Start rendering and playing events; returns a number identifying this sound."""
         if not events:
-            return
+            return None
         self.generation += 1
         threading.Thread(target=self._play, args=(events, self.generation), daemon=True).start()
+        return self.generation
 
     def _play(self, events, generation):
         samples = render(events)
@@ -87,6 +91,7 @@ class Player:
                 file.setframerate(RATE)
                 file.writeframes(samples.tobytes())
             self._start(path)
+            self.started = (generation, time.monotonic())
 
     def _start(self, path):
         if sys.platform == "win32":

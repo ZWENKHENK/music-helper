@@ -1,4 +1,6 @@
 import itertools
+import re
+from collections import namedtuple
 
 NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 LETTERS = "CDEFGAB"
@@ -69,15 +71,39 @@ SCALE_FAMILIES = {
 }
 SCALES = {name: steps for family in SCALE_FAMILIES.values() for name, steps in family.items()}
 
-# Common progressions as scale degrees (1 = first chord of the scale)
+Progression = namedtuple("Progression", "name key numerals description")
+
+# Well-known progressions in Roman numerals, counted from the key's home note along the major scale.
+# Upper case is a major chord, lower case minor, ° diminished, + augmented and ø half-diminished;
+# 7 or maj7 adds a seventh, and b or # moves the root down or up a semitone (bVII in C is Bb).
 PROGRESSIONS = [
-    [1, 5, 6, 4],
-    [1, 4, 5, 1],
-    [1, 6, 4, 5],
-    [2, 5, 1],
-    [6, 4, 1, 5],
-    [1, 4, 6, 5],
+    Progression("Pop axis", "major", "I V vi IV", "The most-used progression in modern pop"),
+    Progression("Doo-wop", "major", "I vi IV V", "The 1950s ballad progression"),
+    Progression("Three-chord cadence", "major", "I IV V I", "The backbone of folk, country and rock and roll"),
+    Progression("Axis from the minor chord", "major", "vi IV I V", "The pop axis started on vi for a moodier feel"),
+    Progression("Jazz ii–V–I", "major", "ii7 V7 Imaj7", "The building block of jazz standards"),
+    Progression("Turnaround", "major", "Imaj7 vi7 ii7 V7", "Loops back to the start in jazz and pop standards"),
+    Progression("Circle of fifths", "major", "iii7 vi7 ii7 V7 Imaj7", "Each chord falls a fifth to the next"),
+    Progression("Royal road", "major", "IVmaj7 V7 iii7 vi", "A favourite of Japanese pop"),
+    Progression("Pachelbel's Canon", "major", "I V vi iii IV I IV V", "The baroque pattern behind countless songs"),
+    Progression("Mixolydian rock", "major", "I bVII IV I", "Classic rock's flat-seven sound"),
+    Progression("Plagal (Amen)", "major", "I IV I", "The gentle IV to I close of hymns"),
+    Progression("Minor iv", "major", "I IV iv I", "Borrows a minor iv for a bittersweet turn"),
+    Progression("12-bar blues", "major", "I7 I7 I7 I7 IV7 IV7 I7 I7 V7 IV7 I7 V7", "The blues form, one chord per bar"),
+    Progression("Minor epic", "minor", "i bVI bIII bVII", "Big, cinematic minor-key pop and rock"),
+    Progression("Andalusian cadence", "minor", "i bVII bVI V", "The descending flamenco progression"),
+    Progression("Minor cadence", "minor", "i iv v i", "Natural minor's version of I IV V I"),
+    Progression("Harmonic minor cadence", "minor", "i iv V i", "A major V pulls harder back home"),
+    Progression("Minor ii–V–i", "minor", "iiø7 V7 i7", "Jazz's minor-key building block"),
+    Progression("Dorian vamp", "minor", "i7 IV7", "The two-chord groove of funk and modal jazz"),
+    Progression("Minor pop loop", "minor", "i bVII bVI bVII", "A rocking loop in natural minor"),
+    Progression("12-bar minor blues", "minor", "i7 i7 i7 i7 iv7 iv7 i7 i7 bVI7 V7 i7 V7", "The blues form in a minor key"),
 ]
+ROMAN = ["I", "II", "III", "IV", "V", "VI", "VII"]
+NUMERAL = re.compile(r"([b#]?)(VII|VI|V|IV|III|II|I|vii|vi|v|iv|iii|ii|i)(°|\+|ø)?(maj7|7)?")
+NUMERAL_MARKS = {"dim": "°", "aug": "+", "majb5": "(b5)", "sus2b5": "sus2(b5)"}
+# How many letters above the root each chord note is named with, e.g. a minor 3rd (3) is a third (2)
+CHORD_LETTERS = {0: 0, 2: 1, 3: 2, 4: 2, 5: 3, 6: 4, 7: 4, 8: 4, 10: 6, 11: 6}
 
 # Lets us look up a chord name from its shape, e.g. (0, 4, 7) -> "major"
 TRIAD_NAMES = {tuple(v): k for k, v in CHORDS.items() if len(v) == 3}
@@ -188,6 +214,50 @@ def scale_chords(root, name):
     return chords
 
 
+def scale_key(name):
+    """'major' if the scale has a major 3rd, otherwise 'minor': which progressions suit it."""
+    return "major" if 4 in SCALES[name] else "minor"
+
+
+def parse_numeral(numeral):
+    """Turn a Roman numeral like 'V7', 'bVII' or 'iiø7' into (semitones above the tonic, chord quality)."""
+    match = NUMERAL.fullmatch(numeral)
+    if not match:
+        raise ValueError(f"I don't recognise the chord numeral '{numeral}'")
+    accidental, roman, mark, seventh = match.groups()
+    step = NATURALS[ROMAN.index(roman.upper())] + {"b": -1, "#": 1, "": 0}[accidental]
+    if mark == "°":
+        quality = "dim"
+    elif mark == "ø":
+        quality = "min7b5"
+    elif mark == "+":
+        quality = "aug"
+    elif roman.islower():
+        quality = "min7" if seventh else "minor"
+    else:
+        quality = seventh or "major"
+    return step % 12, quality
+
+
+def progression_chords(tonic, numerals):
+    """The (root, quality) chords of a progression like 'I V vi IV' in the key of `tonic`."""
+    return [((tonic + step) % 12, quality) for step, quality in map(parse_numeral, numerals.split())]
+
+
+def roman_numeral(tonic, degree, chord):
+    """Write a scale's chord as a Roman numeral, e.g. the chord on degree 3 of A minor (C major) is 'bIII'."""
+    root, quality = chord
+    offset = (root - tonic - NATURALS[degree] + 6) % 12 - 6
+    numeral = ROMAN[degree].lower() if quality in ("minor", "dim", "min7", "min7b5") else ROMAN[degree]
+    return "b" * -offset + "#" * offset + numeral + NUMERAL_MARKS.get(quality, "")
+
+
+def spell_chord(root_name, quality):
+    """Name a chord's notes by stacking letters on its root, e.g. Ab major is Ab C Eb, not G# C D#."""
+    root, start = note_value(root_name), LETTERS.index(root_name[0])
+    return {(root + s) % 12: spell((root + s) % 12, LETTERS[(start + CHORD_LETTERS[s]) % 7]) for s in CHORDS[quality]}
+
+
 def is_playable(shape, tuning, root, required, min_strings, span):
     sounding = [i for i, f in enumerate(shape) if f is not None]
     if len(sounding) < min_strings or sounding[-1] - sounding[0] + 1 != len(sounding):
@@ -274,20 +344,25 @@ def main():
     choice = int(input("\nPick one for chords and progressions: "))
     root, name = scales[choice - 1]
     spelling = spell_scale(root, name)
+    names = {note: spelling.get(note, USUAL_ROOTS[note]) for note in range(12)}
     if len(SCALES[name]) != 7:
         print(f"\nChords that fit in {spelling[root]} {name}:")
         for degree, chords in enumerate(fitting_chords(root, name), start=1):
-            print(f"  {degree}: {', '.join(chord_label(r, q, spelling) for r, q in chords) or '-'}")
-        return
-    chords = [chord_label(r, q, spelling) for r, q in scale_chords(root, name)]
+            print(f"  {degree}: {', '.join(chord_label(r, q, names) for r, q in chords) or '-'}")
+    else:
+        print(f"\nChords in {spelling[root]} {name}:")
+        for degree, chord in enumerate(scale_chords(root, name)):
+            print(f"  {roman_numeral(root, degree, chord):6} {chord_label(*chord, names)}")
 
-    print(f"\nChords in {spelling[root]} {name}:")
-    for degree, chord in enumerate(chords, start=1):
-        print(f"  {degree}: {chord}")
-
-    print("\nProgression ideas:")
+    key = scale_key(name)
+    scale = {(root + s) % 12 for s in SCALES[name]}
+    print(f"\nProgressions in {spelling[root]} {key} (* = chord from outside the scale):")
     for prog in PROGRESSIONS:
-        print("  " + " -> ".join(chords[d - 1] for d in prog))
+        if prog.key != key:
+            continue
+        chords = progression_chords(root, prog.numerals)
+        labels = [chord_label(*c, names) + ("" if set(chord_notes(*c)) <= scale else "*") for c in chords]
+        print(f"  {prog.name} ({prog.numerals}): {' -> '.join(labels)}")
 
 
 if __name__ == "__main__":

@@ -1,4 +1,5 @@
 import ctypes
+import time
 import tkinter as tk
 from tkinter import ttk
 
@@ -7,12 +8,17 @@ from music_helper import (
     PROGRESSIONS,
     SCALE_FAMILIES,
     SCALES,
+    USUAL_ROOTS,
     chord_notes,
     find_chords,
     find_scales,
     fitting_chords,
     parse_notes,
+    progression_chords,
+    roman_numeral,
     scale_chords,
+    scale_key,
+    spell_chord,
     guitar_shapes,
     shape_text,
     spell_scale,
@@ -85,6 +91,8 @@ class MusicHelperApp(tk.Tk):
         self.selected_scale = None  # (root, name)
         self.selected_chord = None  # (root, quality)
         self.spelling = {}  # note number -> name, from the selected scale
+        self.chord_spelling = {}  # note number -> name, from the selected chord
+        self.animation = []  # pending highlights while a progression plays
         self.set_strings(self.parse_tuning(TUNINGS["Standard"]))
         self.shapes = []  # guitar shapes for the selected chord, low string first
         self.shape_index = None  # which shape is on the neck; None shows every position
@@ -207,9 +215,12 @@ class MusicHelperApp(tk.Tk):
         self.scale_title_var = tk.StringVar(value="Pick a scale to see its chords")
         ttk.Label(right, textvariable=self.scale_title_var, style="Heading.TLabel").grid(row=0, column=0, sticky="w")
         ttk.Button(right, text="▶ Play scale", command=self.play_scale).grid(row=0, column=1, sticky="e", pady=(0, 4))
-        self.details = self.make_text(right, height=8, bg=PANEL, padx=8, pady=6,
+        self.details = self.make_text(right, height=8, bg=PANEL, padx=8, pady=6, tabs=("64",),
                                       highlightthickness=1, highlightbackground=BORDER, highlightcolor=BORDER)
         self.details.grid(row=1, column=0, columnspan=2, sticky="nsew")
+        details_scroll = ttk.Scrollbar(right, orient="vertical", command=self.details.yview)
+        details_scroll.grid(row=1, column=2, sticky="ns")
+        self.details.config(yscrollcommand=details_scroll.set)
 
         self.chord_texts = [self.exact_text, self.inside_text, self.details]
         self.render_results()
@@ -255,17 +266,20 @@ class MusicHelperApp(tk.Tk):
     # --- Note input ---
 
     def name(self, note):
-        """Name a note using the selected scale's spelling, falling back to sharps."""
-        return self.spelling.get(note, NOTE_NAMES[note])
+        """Name a note using the selected chord's spelling, then the scale's, then the usual name."""
+        return self.chord_spelling.get(note) or self.root_name(note)
+
+    def root_name(self, note):
+        return self.spelling.get(note, USUAL_ROOTS[note])
 
     def chord_name(self, chord):
         root, quality = chord
-        return f"{self.name(root)} {quality}"
+        return f"{self.root_name(root)} {quality}"
 
     def press(self, note, pitch):
         """A piano key or fret was clicked: play it, and add or remove the note."""
         if self.play_on_click.get():
-            self.player.play([(0, pitch, CHORD_LENGTH)])
+            self.play([(0, pitch, CHORD_LENGTH)])
         self.toggle_note(note)
 
     def toggle_note(self, note):
@@ -306,6 +320,7 @@ class MusicHelperApp(tk.Tk):
 
     def fill_scale_list(self):
         """Show the matching scales in the chosen family, keeping the selected scale if it's still listed."""
+        self.stop_animation()
         family = self.family_var.get()
         if family == ALL_SCALES:
             self.scales = self.all_scales
@@ -336,6 +351,7 @@ class MusicHelperApp(tk.Tk):
         selection = self.scale_list.curselection()
         if not selection:
             return
+        self.stop_animation()
         self.selected_scale = self.scales[selection[0]]
         self.selected_chord = None
         self.spelling = spell_scale(*self.selected_scale)
@@ -348,20 +364,23 @@ class MusicHelperApp(tk.Tk):
         text = tk.Text(parent, wrap="word", state="disabled", relief="flat", width=1, cursor="arrow",
                        font="TkDefaultFont", fg=FG, selectbackground=NOTE_COLOR, **options)
         text.tag_configure("heading", font=("", 10, "bold"))
+        text.tag_configure("bold", font=("", 9, "bold"))
+        text.tag_configure("muted", foreground=MUTED)
         text.tag_configure("chord", foreground=LINK)
         text.tag_bind("chord", "<Enter>", lambda e: text.config(cursor="hand2"))
         text.tag_bind("chord", "<Leave>", lambda e: text.config(cursor="arrow"))
         return text
 
     def write_text(self, widget, parts):
-        """Fill a read-only Text with parts: plain strings, ("heading", text), or (root, quality) chord links."""
+        """Fill a read-only Text with parts: plain strings, (style, text) with a style of "heading", "bold"
+        or "muted", ("play", function) play links, or (root, quality) chord links."""
         widget.config(state="normal")
         widget.delete("1.0", "end")
         for part in parts:
             if isinstance(part, str):
                 widget.insert("end", part)
-            elif part[0] == "heading":
-                widget.insert("end", part[1], "heading")
+            elif part[0] in ("heading", "bold", "muted"):
+                widget.insert("end", part[1], part[0])
             elif part[0] == "play":
                 tag = f"play:{widget.index('end')}"
                 widget.insert("end", "▶ ", ("chord", tag))
@@ -395,38 +414,66 @@ class MusicHelperApp(tk.Tk):
             self.write_text(self.details, [])
         else:
             root, name = self.selected_scale
-            if len(SCALES[name]) != 7:
-                self.scale_title_var.set(f"Chords that fit in {self.name(root)} {name}")
-                parts = []
+            parts = []
+            if len(SCALES[name]) == 7:
+                self.scale_title_var.set(f"Chords in {self.root_name(root)} {name}")
+                for degree, chord in enumerate(scale_chords(root, name)):
+                    parts += [("muted", roman_numeral(root, degree, chord) + "\t"), chord, "\n"]
+            else:
+                self.scale_title_var.set(f"Chords that fit in {self.root_name(root)} {name}")
                 for degree, chords in enumerate(fitting_chords(root, name), start=1):
                     parts.append(f"{degree}: ")
                     parts += self.chord_list(chords) if chords else ["-"]
                     parts.append("\n")
-                self.write_text(self.details, parts)
-                self.update_chord_highlight()
-                return
-            self.scale_title_var.set(f"Chords in {self.name(root)} {name}")
-            chords = scale_chords(root, name)
-            parts = []
-            for degree, chord in enumerate(chords, start=1):
-                parts += [f"{degree}: ", chord, "\n"]
-            parts.append(("heading", "\nProgression ideas:\n"))
-            for prog in PROGRESSIONS:
-                parts.append(("play", lambda p=prog: self.play_progression([chords[d - 1] for d in p])))
-                for i, d in enumerate(prog):
-                    parts += [" -> " if i else "", chords[d - 1]]
-                parts.append("\n")
+            parts += self.progression_parts(root, name)
             self.write_text(self.details, parts)
         self.update_chord_highlight()
 
+    def progression_parts(self, root, name):
+        """The progressions for the scale's key, those that stay inside the scale first."""
+        key = scale_key(name)
+        scale_notes = {(root + s) % 12 for s in SCALES[name]}
+        inside, borrowing = [], []
+        for prog in PROGRESSIONS:
+            if prog.key == key:
+                chords = progression_chords(root, prog.numerals)
+                fits = all(set(chord_notes(*c)) <= scale_notes for c in chords)
+                (inside if fits else borrowing).append((prog, chords))
+
+        parts = [("heading", f"\nProgressions in {self.root_name(root)} {key}\n"),
+                 ("muted", "Click ▶ to hear one and watch it on the piano and guitar.\n\n")]
+        for heading, progressions in [(None, inside), ("Borrowing chords from outside the scale (*)", borrowing)]:
+            if heading and progressions:
+                parts.append(("heading", f"{heading}\n\n"))
+            for prog, chords in progressions:
+                parts += [("play", lambda c=chords: self.play_progression(c, follow=True)),
+                          ("bold", prog.name), ("muted", f"    {prog.numerals}\n")]
+                for i, chord in enumerate(chords):
+                    parts += [" → " if i else "", chord]
+                    if not set(chord_notes(*chord)) <= scale_notes:
+                        parts.append("*")
+                parts.append(("muted", f"\n{prog.description}\n\n"))
+        return parts
+
     def select_chord(self, chord):
+        self.stop_animation()
         self.selected_chord = None if chord == self.selected_chord else chord
         self.update_chord_highlight()
         self.draw_visuals()
         if self.selected_chord and self.play_on_click.get():
             self.play_shape()
 
+    def show_chord(self, chord):
+        """Highlight a chord without playing it, while a progression plays."""
+        self.selected_chord = chord
+        self.update_chord_highlight()
+        self.draw_visuals()
+
     def update_chord_highlight(self):
+        self.chord_spelling = {}
+        if self.selected_chord:
+            root, quality = self.selected_chord
+            self.chord_spelling = spell_chord(self.root_name(root), quality)
         selected = chord_tag(self.selected_chord) if self.selected_chord else None
         for widget in self.chord_texts:
             for tag in widget.tag_names():
@@ -486,31 +533,58 @@ class MusicHelperApp(tk.Tk):
                 self.play_progression([self.selected_chord])
             return
         pitches = [p + f for p, f in zip(self.string_pitches[::-1], shape) if f is not None]
-        self.player.play([(j * 0.04, p, CHORD_LENGTH) for j, p in enumerate(pitches)])
+        self.play([(j * 0.04, p, CHORD_LENGTH) for j, p in enumerate(pitches)])
 
     # --- Playback ---
+
+    def play(self, events):
+        """Play a sound, cutting off any progression that is still being followed on screen."""
+        self.stop_animation()
+        return self.player.play(events)
 
     def play_notes(self):
         """Play your notes one at a time, rising from middle C, then all together."""
         pitches = voice(sorted(self.notes))
         events = [(i * SCALE_STEP, p, SCALE_STEP * 1.5) for i, p in enumerate(pitches)]
         start = len(pitches) * SCALE_STEP
-        self.player.play(events + [(start, p, CHORD_LENGTH) for p in pitches])
+        self.play(events + [(start, p, CHORD_LENGTH) for p in pitches])
 
     def play_scale(self):
         if not self.selected_scale:
             return
         root, name = self.selected_scale
         pitches = voice([(root + s) % 12 for s in SCALES[name]] + [root])
-        self.player.play([(i * SCALE_STEP, p, SCALE_STEP * 1.5) for i, p in enumerate(pitches)])
+        self.play([(i * SCALE_STEP, p, SCALE_STEP * 1.5) for i, p in enumerate(pitches)])
 
-    def play_progression(self, chords):
-        """Play chords one after another, each strummed slightly from the root up."""
+    def play_progression(self, chords, follow=False):
+        """Play chords one after another, each strummed slightly from the root up.
+
+        With `follow`, each chord is highlighted on the piano, guitar and in the text as it sounds.
+        """
         events = []
         for i, chord in enumerate(chords):
             for j, pitch in enumerate(voice(chord_notes(*chord))):
                 events.append((i * PROGRESSION_STEP + j * 0.03, pitch, CHORD_LENGTH if i == len(chords) - 1 else PROGRESSION_STEP))
-        self.player.play(events)
+        generation = self.play(events)
+        if follow:
+            self.follow_playback(generation, chords)
+
+    def follow_playback(self, generation, chords):
+        """Wait for the sound to start (it is rendered in the background), then time each chord's highlight."""
+        if self.player.generation != generation:
+            return  # another sound replaced this one
+        started_generation, started_at = self.player.started
+        if started_generation != generation:
+            self.animation = [self.after(20, self.follow_playback, generation, chords)]
+            return
+        now = time.monotonic()
+        self.animation = [self.after(max(0, int((started_at + i * PROGRESSION_STEP - now) * 1000)), self.show_chord, chord)
+                          for i, chord in enumerate(chords)]
+
+    def stop_animation(self):
+        for job in self.animation:
+            self.after_cancel(job)
+        self.animation = []
 
     # --- Guitar tuning ---
 
