@@ -23,8 +23,21 @@ OCTAVES = 2
 WHITE_W, WHITE_H = 36, 130
 BLACK_W, BLACK_H = 22, 80
 
-# Guitar layout: standard tuning, high E drawn at the top like tab
-STRINGS = [4, 11, 7, 2, 9, 4]  # E B G D A E
+# Guitar tunings, written low string to high; the neck draws the high string at the top like tab
+TUNINGS = {
+    "Standard": "E A D G B E",
+    "Half step down": "Eb Ab Db Gb Bb Eb",
+    "Drop D": "D A D G B E",
+    "D Standard": "D G C F A D",
+    "Drop C": "C G C F A D",
+    "DADGAD": "D A D G A D",
+    "Open G": "D G D G B D",
+    "Open D": "D A D F# A D",
+    "Open E": "E B E G# B E",
+    "7-string": "B E A D G B E",
+    "Bass": "E A D G",
+}
+MIN_STRINGS, MAX_STRINGS = 4, 8
 FRETS = 12
 NUT_X, FRET_W, STRING_GAP, TOP = 44, 52, 26, 18
 FRET_MARKERS = [3, 5, 7, 9]
@@ -38,6 +51,7 @@ class MusicHelperApp(tk.Tk):
         self.notes = set()
         self.scales = []
         self.selected_scale = None  # (root, name)
+        self.strings = self.parse_tuning(TUNINGS["Standard"])
 
         main = ttk.Frame(self, padding=12)
         main.pack(fill="both", expand=True)
@@ -64,8 +78,24 @@ class MusicHelperApp(tk.Tk):
         self.piano = tk.Canvas(main, width=WHITE_W * 7 * OCTAVES + 1, height=WHITE_H + 1, highlightthickness=0, cursor="hand2")
         self.piano.grid(row=2, column=0, columnspan=2, pady=(0, 10))
 
-        self.guitar = tk.Canvas(main, width=NUT_X + FRET_W * FRETS + 10, height=TOP + STRING_GAP * 5 + 40, highlightthickness=0, cursor="hand2")
-        self.guitar.grid(row=3, column=0, columnspan=2, pady=(0, 6))
+        guitar_frame = ttk.Frame(main)
+        guitar_frame.grid(row=3, column=0, columnspan=2, pady=(0, 6))
+        tuning_row = ttk.Frame(guitar_frame)
+        tuning_row.pack(anchor="w", pady=(0, 4))
+        ttk.Label(tuning_row, text="Tuning:").pack(side="left", padx=(0, 6))
+        self.tuning_var = tk.StringVar(value=self.tuning_label("Standard"))
+        tuning_box = ttk.Combobox(tuning_row, textvariable=self.tuning_var, width=32,
+                                  values=[self.tuning_label(name) for name in TUNINGS])
+        tuning_box.pack(side="left")
+        tuning_box.bind("<<ComboboxSelected>>", lambda e: self.set_tuning())
+        tuning_box.bind("<Return>", lambda e: self.set_tuning())
+        ttk.Label(tuning_row, text="or type your own, low to high, and press Enter",
+                  foreground="#666").pack(side="left", padx=(8, 0))
+        self.tuning_error_var = tk.StringVar()
+        ttk.Label(guitar_frame, textvariable=self.tuning_error_var, foreground="red").pack(anchor="w")
+
+        self.guitar = tk.Canvas(guitar_frame, width=NUT_X + FRET_W * FRETS + 10, highlightthickness=0, cursor="hand2")
+        self.guitar.pack()
         self.guitar.bind("<Button-1>", self.on_guitar_click)
 
         legend = ttk.Frame(main)
@@ -185,6 +215,33 @@ class MusicHelperApp(tk.Tk):
         self.details.insert("1.0", body)
         self.details.config(state="disabled")
 
+    # --- Guitar tuning ---
+
+    @staticmethod
+    def tuning_label(name):
+        return f"{name} ({TUNINGS[name]})"
+
+    @staticmethod
+    def parse_tuning(text):
+        """Turn 'E A D G B E' (low to high) into note numbers, high string first."""
+        strings = [parse_notes(word).pop() for word in text.replace(",", " ").split()]
+        if not MIN_STRINGS <= len(strings) <= MAX_STRINGS:
+            raise ValueError(f"A tuning needs {MIN_STRINGS} to {MAX_STRINGS} strings")
+        return strings[::-1]
+
+    def set_tuning(self):
+        text = self.tuning_var.get()
+        for name in TUNINGS:
+            if text in (name, self.tuning_label(name)):
+                text = TUNINGS[name]
+        try:
+            self.strings = self.parse_tuning(text)
+        except ValueError as error:
+            self.tuning_error_var.set(str(error))
+            return
+        self.tuning_error_var.set("")
+        self.draw_guitar()
+
     # --- Drawing ---
 
     def note_style(self, note):
@@ -244,7 +301,8 @@ class MusicHelperApp(tk.Tk):
     def draw_guitar(self):
         c = self.guitar
         c.delete("all")
-        bottom = TOP + STRING_GAP * 5
+        bottom = TOP + STRING_GAP * (len(self.strings) - 1)
+        c.config(height=bottom + 40)
         right = NUT_X + FRET_W * FRETS
         c.create_rectangle(NUT_X, TOP, right, bottom, fill="#d6b48a", outline="")
 
@@ -262,13 +320,16 @@ class MusicHelperApp(tk.Tk):
             if fret:
                 c.create_text(self.fret_x(fret), bottom + 22, text=str(fret), fill="#666", font=("", 8))
 
-        for s, open_note in enumerate(STRINGS):
+        for s, open_note in enumerate(self.strings):
             y = TOP + s * STRING_GAP
             c.create_line(NUT_X, y, right, y, fill="#555", width=1 + s * 0.4)
             for fret in range(FRETS + 1):
                 note = (open_note + fret) % 12
                 fill, is_root = self.note_style(note)
                 if not fill:
+                    if fret == 0:  # always show the open string's name so the tuning is visible
+                        c.create_oval(NUT_X / 2 - 10, y - 10, NUT_X / 2 + 10, y + 10, fill="white", outline="#bbb")
+                        c.create_text(NUT_X / 2, y, text=NOTE_NAMES[note], font=("", 7), fill="#666")
                     continue
                 x = self.fret_x(fret)
                 c.create_oval(x - 10, y - 10, x + 10, y + 10, fill=fill,
@@ -278,12 +339,12 @@ class MusicHelperApp(tk.Tk):
 
     def on_guitar_click(self, event):
         s = round((event.y - TOP) / STRING_GAP)
-        if not 0 <= s < len(STRINGS):
+        if not 0 <= s < len(self.strings):
             return
         fret = 0 if event.x < NUT_X else int((event.x - NUT_X) // FRET_W) + 1
         if fret > FRETS:
             return
-        self.toggle_note((STRINGS[s] + fret) % 12)
+        self.toggle_note((self.strings[s] + fret) % 12)
 
 
 if __name__ == "__main__":
