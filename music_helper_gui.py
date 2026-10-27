@@ -13,6 +13,7 @@ from music_helper import (
     scale_chords,
     spell_scale,
 )
+from sound import Player, voice
 
 # Dark theme colours
 BG = "#1e1f22"
@@ -58,6 +59,9 @@ NUT_X, FRET_W, STRING_GAP, TOP = 44, 52, 26, 18
 FRET_MARKERS = [3, 5, 7, 9]
 
 CHORD_HINT = "Click a chord name to show it on the piano and guitar."
+PIANO_START = 60  # the piano's lowest C is middle C
+LOWEST_STRING = 40  # E2, a guitar's low E; other tunings put their lowest string as near to this as possible
+CHORD_LENGTH, SCALE_STEP, PROGRESSION_STEP = 1.6, 0.3, 0.9  # seconds
 
 
 def chord_tag(chord):
@@ -75,7 +79,9 @@ class MusicHelperApp(tk.Tk):
         self.selected_scale = None  # (root, name)
         self.selected_chord = None  # (root, quality)
         self.spelling = {}  # note number -> name, from the selected scale
-        self.strings = self.parse_tuning(TUNINGS["Standard"])
+        self.set_strings(self.parse_tuning(TUNINGS["Standard"]))
+        self.player = Player()
+        self.play_on_click = tk.BooleanVar(value=True)
         self.setup_theme()
 
         main = ttk.Frame(self, padding=12)
@@ -96,6 +102,8 @@ class MusicHelperApp(tk.Tk):
         entry.focus()
         ttk.Button(entry_row, text="Analyze", command=self.analyze).grid(row=0, column=2, padx=(6, 0))
         ttk.Button(entry_row, text="Clear", command=self.clear).grid(row=0, column=3, padx=(6, 0))
+        ttk.Button(entry_row, text="▶ Play", command=self.play_notes).grid(row=0, column=4, padx=(6, 0))
+        ttk.Checkbutton(entry_row, text="Play on click", variable=self.play_on_click).grid(row=0, column=5, padx=(10, 0))
 
         self.error_var = tk.StringVar()
         ttk.Label(main, textvariable=self.error_var, foreground=ERROR).grid(row=1, column=0, columnspan=2, sticky="w", pady=4)
@@ -167,9 +175,10 @@ class MusicHelperApp(tk.Tk):
 
         self.scale_title_var = tk.StringVar(value="Pick a scale to see its chords")
         ttk.Label(right, textvariable=self.scale_title_var, style="Heading.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Button(right, text="▶ Play scale", command=self.play_scale).grid(row=0, column=1, sticky="e", pady=(0, 4))
         self.details = self.make_text(right, height=8, bg=PANEL, padx=8, pady=6,
                                       highlightthickness=1, highlightbackground=BORDER, highlightcolor=BORDER)
-        self.details.grid(row=1, column=0, sticky="nsew")
+        self.details.grid(row=1, column=0, columnspan=2, sticky="nsew")
 
         self.chord_texts = [self.exact_text, self.inside_text, self.details]
         self.render_results()
@@ -192,6 +201,8 @@ class MusicHelperApp(tk.Tk):
                             lightcolor=PANEL, darkcolor=PANEL, arrowcolor=FG)
             style.map(widget, bordercolor=[("focus", NOTE_COLOR)], fieldbackground=[("readonly", PANEL)],
                       background=[("active", HOVER)], lightcolor=[("focus", PANEL)])
+        style.configure("TCheckbutton", indicatorbackground=PANEL, indicatorforeground="white", upperbordercolor=BORDER, lowerbordercolor=BORDER)
+        style.map("TCheckbutton", background=[("active", BG)], indicatorbackground=[("selected", NOTE_COLOR)])
         style.configure("Vertical.TScrollbar", background=PANEL, lightcolor=PANEL, darkcolor=PANEL, arrowcolor=MUTED)
         style.map("Vertical.TScrollbar", background=[("active", HOVER)])
         # The combobox dropdown is a plain Tk listbox, styled through the option database
@@ -219,6 +230,12 @@ class MusicHelperApp(tk.Tk):
     def chord_name(self, chord):
         root, quality = chord
         return f"{self.name(root)} {quality}"
+
+    def press(self, note, pitch):
+        """A piano key or fret was clicked: play it, and add or remove the note."""
+        if self.play_on_click.get():
+            self.player.play([(0, pitch, CHORD_LENGTH)])
+        self.toggle_note(note)
 
     def toggle_note(self, note):
         try:
@@ -302,6 +319,10 @@ class MusicHelperApp(tk.Tk):
                 widget.insert("end", part)
             elif part[0] == "heading":
                 widget.insert("end", part[1], "heading")
+            elif part[0] == "play":
+                tag = f"play:{widget.index('end')}"
+                widget.insert("end", "▶ ", ("chord", tag))
+                widget.tag_bind(tag, "<Button-1>", lambda e, play=part[1]: play())
             else:
                 tag = chord_tag(part)
                 widget.insert("end", self.chord_name(part), ("chord", tag))
@@ -333,6 +354,7 @@ class MusicHelperApp(tk.Tk):
                 parts += [f"{degree}: ", chord, "\n"]
             parts.append(("heading", "\nProgression ideas:\n"))
             for prog in PROGRESSIONS:
+                parts.append(("play", lambda p=prog: self.play_progression([chords[d - 1] for d in p])))
                 for i, d in enumerate(prog):
                     parts += [" -> " if i else "", chords[d - 1]]
                 parts.append("\n")
@@ -341,6 +363,8 @@ class MusicHelperApp(tk.Tk):
 
     def select_chord(self, chord):
         self.selected_chord = None if chord == self.selected_chord else chord
+        if self.selected_chord and self.play_on_click.get():
+            self.play_progression([chord])
         self.update_chord_highlight()
         self.draw_visuals()
 
@@ -356,6 +380,30 @@ class MusicHelperApp(tk.Tk):
             self.chord_status_var.set(f"Showing {self.chord_name(self.selected_chord)}: {names}. Click it again to hide.")
         else:
             self.chord_status_var.set(CHORD_HINT)
+
+    # --- Playback ---
+
+    def play_notes(self):
+        """Play your notes one at a time, rising from middle C, then all together."""
+        pitches = voice(sorted(self.notes))
+        events = [(i * SCALE_STEP, p, SCALE_STEP * 1.5) for i, p in enumerate(pitches)]
+        start = len(pitches) * SCALE_STEP
+        self.player.play(events + [(start, p, CHORD_LENGTH) for p in pitches])
+
+    def play_scale(self):
+        if not self.selected_scale:
+            return
+        root, name = self.selected_scale
+        pitches = voice([(root + s) % 12 for s in SCALES[name]] + [root])
+        self.player.play([(i * SCALE_STEP, p, SCALE_STEP * 1.5) for i, p in enumerate(pitches)])
+
+    def play_progression(self, chords):
+        """Play chords one after another, each strummed slightly from the root up."""
+        events = []
+        for i, chord in enumerate(chords):
+            for j, pitch in enumerate(voice(chord_notes(*chord))):
+                events.append((i * PROGRESSION_STEP + j * 0.03, pitch, CHORD_LENGTH if i == len(chords) - 1 else PROGRESSION_STEP))
+        self.player.play(events)
 
     # --- Guitar tuning ---
 
@@ -373,16 +421,29 @@ class MusicHelperApp(tk.Tk):
 
     def set_tuning(self):
         text = self.tuning_var.get()
+        lowest = LOWEST_STRING
         for name in TUNINGS:
             if text in (name, self.tuning_label(name)):
                 text = TUNINGS[name]
+                if name == "Bass":
+                    lowest -= 12  # bass strings sound an octave below a guitar's
         try:
-            self.strings = self.parse_tuning(text)
+            self.set_strings(self.parse_tuning(text), lowest)
         except ValueError as error:
             self.tuning_error_var.set(str(error))
             return
         self.tuning_error_var.set("")
         self.draw_guitar()
+
+    def set_strings(self, strings, lowest=LOWEST_STRING):
+        """Store a tuning (high string first) and work out each open string's actual pitch.
+
+        The lowest string is put as close as possible to the `lowest` pitch, and each string above it is higher.
+        """
+        self.strings = strings
+        low_first = strings[::-1]
+        lowest += (low_first[0] - lowest + 6) % 12 - 6
+        self.string_pitches = voice(low_first, start=lowest)[::-1]
 
     # --- Drawing ---
 
@@ -423,7 +484,7 @@ class MusicHelperApp(tk.Tk):
             if is_root:
                 items.append(c.create_oval(x + WHITE_W / 2 - 5, WHITE_H - 40, x + WHITE_W / 2 + 5, WHITE_H - 30, fill=ROOT_COLOR, outline=""))
             for item in items:
-                c.tag_bind(item, "<Button-1>", lambda e, n=note: self.toggle_note(n))
+                c.tag_bind(item, "<Button-1>", lambda e, n=note, p=PIANO_START + 12 * (i // 7) + note: self.press(n, p))
 
         for i in range(7 * OCTAVES):
             if i % 7 not in BLACK_AFTER:
@@ -439,7 +500,7 @@ class MusicHelperApp(tk.Tk):
             if is_root:
                 items.append(c.create_oval(x + BLACK_W / 2 - 4, BLACK_H - 34, x + BLACK_W / 2 + 4, BLACK_H - 26, fill=ROOT_COLOR, outline=""))
             for item in items:
-                c.tag_bind(item, "<Button-1>", lambda e, n=note: self.toggle_note(n))
+                c.tag_bind(item, "<Button-1>", lambda e, n=note, p=PIANO_START + 12 * (i // 7) + note: self.press(n, p))
 
     def fret_x(self, fret):
         """Centre x of a fret position; fret 0 (open string) sits left of the nut."""
@@ -490,7 +551,7 @@ class MusicHelperApp(tk.Tk):
         fret = 0 if event.x < NUT_X else int((event.x - NUT_X) // FRET_W) + 1
         if fret > FRETS:
             return
-        self.toggle_note((self.strings[s] + fret) % 12)
+        self.press((self.strings[s] + fret) % 12, self.string_pitches[s] + fret)
 
 
 if __name__ == "__main__":
