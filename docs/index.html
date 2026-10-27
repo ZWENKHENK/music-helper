@@ -35,8 +35,8 @@
 
       <div class="row">
         <label for="tuning">Tuning:</label>
-        <input id="tuning" list="tunings" class="tuning-input">
-        <datalist id="tunings"></datalist>
+        <select id="tuning-preset" aria-label="Tuning presets"></select>
+        <input id="tuning" class="tuning-input" aria-label="Tuning, low string to high">
         <span class="muted">or type your own, low to high, and press Enter</span>
       </div>
       <p id="tuning-error" class="error"></p>

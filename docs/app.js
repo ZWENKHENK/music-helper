@@ -551,6 +551,8 @@ function setTuning() {
     return;
   }
   $("tuning-error").textContent = "";
+  // Show the matching preset, or Custom if none matches
+  $("tuning-preset").value = Object.keys(TUNINGS).find(name => TUNINGS[name] === text) ?? "";
   updateShapes();
   drawGuitar();
 }
@@ -710,11 +712,11 @@ function onPianoClick(event) {
 async function start() {
   setStrings(parseTuning(TUNINGS["Standard"]));
   $("tuning").value = tuningLabel("Standard");
-  $("tunings").replaceChildren(...Object.keys(TUNINGS).map(name => {
-    const option = document.createElement("option");
-    option.value = tuningLabel(name);
-    return option;
-  }));
+  $("tuning-preset").replaceChildren(
+    ...Object.keys(TUNINGS).map(name => new Option(tuningLabel(name), name)),
+    new Option("Custom", ""),
+  );
+  $("tuning-preset").value = "Standard";
 
   midiOutputList = await midiOutputs();
   const output = $("output");
@@ -738,6 +740,12 @@ $("notes").addEventListener("keydown", event => {
 });
 $("output").addEventListener("change", () => setOutput());
 $("instrument").addEventListener("change", setInstrument);
+$("tuning-preset").addEventListener("change", () => {
+  if ($("tuning-preset").value) {
+    $("tuning").value = tuningLabel($("tuning-preset").value); // the name lets setTuning spot Bass
+    setTuning();
+  }
+});
 $("tuning").addEventListener("change", setTuning);
 $("tuning").addEventListener("keydown", event => {
   if (event.key === "Enter") setTuning();
