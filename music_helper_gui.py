@@ -5,10 +5,12 @@ from tkinter import ttk
 from music_helper import (
     NOTE_NAMES,
     PROGRESSIONS,
+    SCALE_FAMILIES,
     SCALES,
     chord_notes,
     find_chords,
     find_scales,
+    fitting_chords,
     parse_notes,
     scale_chords,
     guitar_shapes,
@@ -61,6 +63,7 @@ NUT_X, FRET_W, STRING_GAP, TOP = 44, 52, 26, 18
 FRET_MARKERS = [3, 5, 7, 9]
 
 CHORD_HINT = "Click a chord name to show it on the piano and guitar."
+ALL_SCALES = "All scales"
 PIANO_START = 60  # the piano's lowest C is middle C
 LOWEST_STRING = 40  # E2, a guitar's low E; other tunings put their lowest string as near to this as possible
 CHORD_LENGTH, SCALE_STEP, PROGRESSION_STEP = 1.6, 0.3, 0.9  # seconds
@@ -77,7 +80,8 @@ class MusicHelperApp(tk.Tk):
         self.minsize(760, 800)
         self.notes = set()
         self.exact, self.fits_inside = [], []
-        self.scales = []
+        self.all_scales = []  # every scale containing the notes
+        self.scales = []  # the ones shown, after the family filter
         self.selected_scale = None  # (root, name)
         self.selected_chord = None  # (root, quality)
         self.spelling = {}  # note number -> name, from the selected scale
@@ -165,7 +169,7 @@ class MusicHelperApp(tk.Tk):
         left = ttk.Frame(main)
         left.grid(row=6, column=0, sticky="nsew", padx=(0, 6))
         left.columnconfigure(0, weight=1)
-        left.rowconfigure(5, weight=1)
+        left.rowconfigure(6, weight=1)
 
         ttk.Label(left, text="Chords that match exactly", style="Heading.TLabel").grid(row=0, column=0, sticky="w")
         self.exact_text = self.make_text(left, height=2, bg=BG)
@@ -175,14 +179,23 @@ class MusicHelperApp(tk.Tk):
         self.inside_text = self.make_text(left, height=3, bg=BG)
         self.inside_text.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(0, 8))
 
-        ttk.Label(left, text="Scales/modes containing your notes", style="Heading.TLabel").grid(row=4, column=0, sticky="w")
+        self.scales_heading_var = tk.StringVar(value="Scales containing your notes")
+        ttk.Label(left, textvariable=self.scales_heading_var, style="Heading.TLabel").grid(row=4, column=0, sticky="w")
+        filter_row = ttk.Frame(left)
+        filter_row.grid(row=5, column=0, columnspan=2, sticky="w", pady=(2, 4))
+        ttk.Label(filter_row, text="Show:").pack(side="left", padx=(0, 6))
+        self.family_var = tk.StringVar(value=ALL_SCALES)
+        family_box = ttk.Combobox(filter_row, textvariable=self.family_var, state="readonly", width=24,
+                                  values=[ALL_SCALES, *SCALE_FAMILIES])
+        family_box.pack(side="left")
+        family_box.bind("<<ComboboxSelected>>", lambda e: self.fill_scale_list())
         self.scale_list = tk.Listbox(left, exportselection=False, activestyle="none", height=8,
                                      bg=PANEL, fg=FG, selectbackground=NOTE_COLOR, selectforeground="white",
                                      relief="flat", highlightthickness=1, highlightbackground=BORDER, highlightcolor=BORDER)
-        self.scale_list.grid(row=5, column=0, sticky="nsew")
+        self.scale_list.grid(row=6, column=0, sticky="nsew")
         self.scale_list.bind("<<ListboxSelect>>", lambda e: self.show_scale())
         scroll = ttk.Scrollbar(left, orient="vertical", command=self.scale_list.yview)
-        scroll.grid(row=5, column=1, sticky="ns")
+        scroll.grid(row=6, column=1, sticky="ns")
         self.scale_list.config(yscrollcommand=scroll.set)
 
         # Right: chords and progressions for the selected scale
@@ -271,13 +284,8 @@ class MusicHelperApp(tk.Tk):
         self.error_var.set("")
         self.notes = set()
         self.exact, self.fits_inside = [], []
-        self.scales = []
-        self.selected_scale = None
-        self.selected_chord = None
-        self.spelling = {}
-        self.scale_list.delete(0, "end")
-        self.render_results()
-        self.draw_visuals()
+        self.all_scales = []
+        self.fill_scale_list()
 
     def analyze(self):
         text = self.notes_var.get()
@@ -292,12 +300,29 @@ class MusicHelperApp(tk.Tk):
         self.error_var.set("")
 
         self.exact, self.fits_inside = find_chords(self.notes)
-        self.scales = find_scales(self.notes)
+        self.all_scales = find_scales(self.notes)
+        self.selected_scale = None  # so the first matching scale gets picked
+        self.fill_scale_list()
+
+    def fill_scale_list(self):
+        """Show the matching scales in the chosen family, keeping the selected scale if it's still listed."""
+        family = self.family_var.get()
+        if family == ALL_SCALES:
+            self.scales = self.all_scales
+            count = f" ({len(self.scales)})"
+        else:
+            self.scales = [s for s in self.all_scales if s[1] in SCALE_FAMILIES[family]]
+            count = f" ({len(self.scales)} of {len(self.all_scales)})"
+        self.scales_heading_var.set("Scales containing your notes" + (count if self.notes else ""))
         self.scale_list.delete(0, "end")
         for root, name in self.scales:
             self.scale_list.insert("end", f"{spell_scale(root, name)[root]} {name}")
 
-        if self.scales:
+        if self.selected_scale in self.scales:
+            index = self.scales.index(self.selected_scale)
+            self.scale_list.selection_set(index)
+            self.scale_list.see(index)
+        elif self.scales:
             self.scale_list.selection_set(0)
             self.show_scale()
         else:
@@ -360,11 +385,26 @@ class MusicHelperApp(tk.Tk):
         self.write_text(self.inside_text, self.chord_list(self.fits_inside) if self.notes else ["-"])
 
         if not self.selected_scale:
-            title = "No scale or mode contains all of those notes." if self.notes else "Pick a scale to see its chords"
+            if self.all_scales:
+                title = "No scale in this family contains all of those notes."
+            elif self.notes:
+                title = "No scale or mode contains all of those notes."
+            else:
+                title = "Pick a scale to see its chords"
             self.scale_title_var.set(title)
             self.write_text(self.details, [])
         else:
             root, name = self.selected_scale
+            if len(SCALES[name]) != 7:
+                self.scale_title_var.set(f"Chords that fit in {self.name(root)} {name}")
+                parts = []
+                for degree, chords in enumerate(fitting_chords(root, name), start=1):
+                    parts.append(f"{degree}: ")
+                    parts += self.chord_list(chords) if chords else ["-"]
+                    parts.append("\n")
+                self.write_text(self.details, parts)
+                self.update_chord_highlight()
+                return
             self.scale_title_var.set(f"Chords in {self.name(root)} {name}")
             chords = scale_chords(root, name)
             parts = []

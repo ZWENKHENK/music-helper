@@ -4,6 +4,8 @@ NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 LETTERS = "CDEFGAB"
 NATURALS = [0, 2, 4, 5, 7, 9, 11]  # semitone of each letter above C
 ACCIDENTALS = {"#": 1, "♯": 1, "b": -1, "♭": -1}
+# The usual name for each root, used to break ties when spelling scales (Bb blues rather than A# blues)
+USUAL_ROOTS = ["C", "Db", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"]
 
 # Each chord/scale is a list of steps (in semitones) above the root note
 CHORDS = {
@@ -13,22 +15,59 @@ CHORDS = {
     "aug": [0, 4, 8],
     "sus2": [0, 2, 7],
     "sus4": [0, 5, 7],
+    "majb5": [0, 4, 6],
+    "sus2b5": [0, 2, 6],
     "maj7": [0, 4, 7, 11],
     "7": [0, 4, 7, 10],
     "min7": [0, 3, 7, 10],
     "min7b5": [0, 3, 6, 10],
 }
 
-SCALES = {
-    "Ionian (major)": [0, 2, 4, 5, 7, 9, 11],
-    "Dorian": [0, 2, 3, 5, 7, 9, 10],
-    "Phrygian": [0, 1, 3, 5, 7, 8, 10],
-    "Lydian": [0, 2, 4, 6, 7, 9, 11],
-    "Mixolydian": [0, 2, 4, 5, 7, 9, 10],
-    "Aeolian (natural minor)": [0, 2, 3, 5, 7, 8, 10],
-    "Locrian": [0, 1, 3, 5, 6, 8, 10],
-    "Harmonic minor": [0, 2, 3, 5, 7, 8, 11],
+SCALE_FAMILIES = {
+    "Major modes": {
+        "Ionian (major)": [0, 2, 4, 5, 7, 9, 11],
+        "Dorian": [0, 2, 3, 5, 7, 9, 10],
+        "Phrygian": [0, 1, 3, 5, 7, 8, 10],
+        "Lydian": [0, 2, 4, 6, 7, 9, 11],
+        "Mixolydian": [0, 2, 4, 5, 7, 9, 10],
+        "Aeolian (natural minor)": [0, 2, 3, 5, 7, 8, 10],
+        "Locrian": [0, 1, 3, 5, 6, 8, 10],
+    },
+    "Harmonic and melodic": {
+        "Harmonic minor": [0, 2, 3, 5, 7, 8, 11],
+        "Melodic minor": [0, 2, 3, 5, 7, 9, 11],
+        "Harmonic major": [0, 2, 4, 5, 7, 8, 11],
+    },
+    "Melodic minor modes": {
+        "Dorian b2": [0, 1, 3, 5, 7, 9, 10],
+        "Lydian augmented": [0, 2, 4, 6, 8, 9, 11],
+        "Lydian dominant": [0, 2, 4, 6, 7, 9, 10],
+        "Mixolydian b6": [0, 2, 4, 5, 7, 8, 10],
+        "Locrian #2": [0, 2, 3, 5, 6, 8, 10],
+        "Altered": [0, 1, 3, 4, 6, 8, 10],
+    },
+    "Exotic": {
+        "Phrygian dominant": [0, 1, 4, 5, 7, 8, 10],
+        "Double harmonic major": [0, 1, 4, 5, 7, 8, 11],
+        "Hungarian minor": [0, 2, 3, 6, 7, 8, 11],
+        "Neapolitan minor": [0, 1, 3, 5, 7, 8, 11],
+        "Neapolitan major": [0, 1, 3, 5, 7, 9, 11],
+    },
+    "Pentatonic and blues": {
+        "Major pentatonic": [0, 2, 4, 7, 9],
+        "Minor pentatonic": [0, 3, 5, 7, 10],
+        "Blues": [0, 3, 5, 6, 7, 10],
+        "Major blues": [0, 2, 3, 4, 7, 9],
+        "Hirajoshi": [0, 2, 3, 7, 8],
+        "In sen": [0, 1, 5, 7, 10],
+    },
+    "Symmetric": {
+        "Whole tone": [0, 2, 4, 6, 8, 10],
+        "Diminished (half-whole)": [0, 1, 3, 4, 6, 7, 9, 10],
+        "Diminished (whole-half)": [0, 2, 3, 5, 6, 8, 9, 11],
+    },
 }
+SCALES = {name: steps for family in SCALE_FAMILIES.values() for name, steps in family.items()}
 
 # Common progressions as scale degrees (1 = first chord of the scale)
 PROGRESSIONS = [
@@ -63,21 +102,39 @@ def spell(note, letter):
     return letter + ("#" * offset if offset > 0 else "b" * -offset)
 
 
-def spell_scale(root, name):
-    """Name each note of a 7-note scale with its own letter, e.g. F major gets Bb rather than A#.
+def letter_steps(steps):
+    """How many letters above the root's letter each scale note is named with.
 
-    Tries every way of naming the root (e.g. A# or Bb) and keeps the one with the fewest accidentals.
-    Returns a dict of note number -> name.
+    A 7-note scale uses each letter once. Other scales use the usual interval names
+    (b3, 4, b5...), so the blues scale on C is C Eb F Gb G Bb.
+    """
+    if len(steps) == 7:
+        return list(range(7))
+    letters = {0: 0, 1: 1, 2: 1, 3: 2, 4: 2, 5: 3, 6: 4, 7: 4, 8: 5, 9: 5, 10: 6, 11: 6}
+    if 5 not in steps:
+        letters[6] = 3  # #4 rather than b5 when there's no 4th, e.g. whole tone
+    if 7 not in steps and 9 not in steps:
+        letters[8] = 4  # #5 rather than b6 when there's no 5th or 6th, e.g. whole tone
+    return [letters[s] for s in steps]
+
+
+def spell_scale(root, name):
+    """Name each note of a scale so it reads well, e.g. F major gets Bb rather than A#.
+
+    Tries every way of naming the root (e.g. A# or Bb) and keeps the one with the fewest accidentals,
+    preferring the usual root name on a tie. Returns a dict of note number -> name.
     """
     best = None
+    steps = SCALES[name]
+    letter_offsets = letter_steps(steps)
     for start, letter in enumerate(LETTERS):
         if len(spell(root, letter)) > 2:  # root would need a double sharp/flat
             continue
-        names = [spell((root + s) % 12, LETTERS[(start + i) % 7]) for i, s in enumerate(SCALES[name])]
-        accidentals = sum(len(n) - 1 for n in names)
-        if best is None or accidentals < best[0]:
-            best = (accidentals, names)
-    return {(root + s) % 12: n for s, n in zip(SCALES[name], best[1])}
+        names = [spell((root + s) % 12, LETTERS[(start + k) % 7]) for s, k in zip(steps, letter_offsets)]
+        score = (sum(len(n) - 1 for n in names), names[0] != USUAL_ROOTS[root])
+        if best is None or score < best[0]:
+            best = (score, names)
+    return {(root + s) % 12: n for s, n in zip(steps, best[1])}
 
 
 def chord_notes(root, quality):
@@ -111,8 +168,17 @@ def find_scales(notes):
     return matches
 
 
+def fitting_chords(root, name):
+    """For each note of the scale, every chord built on it that stays inside the scale.
+
+    Used for scales that aren't 7 notes (pentatonic, blues...), where stacking thirds doesn't work.
+    """
+    scale = [(root + s) % 12 for s in SCALES[name]]
+    return [[(note, q) for q in CHORDS if set(chord_notes(note, q)) <= set(scale)] for note in scale]
+
+
 def scale_chords(root, name):
-    """Build a triad on every note of the scale by stacking thirds, as (root, quality) pairs."""
+    """Build a triad on every note of a 7-note scale by stacking thirds, as (root, quality) pairs."""
     scale = [(root + s) % 12 for s in SCALES[name]]
     chords = []
     for i in range(len(scale)):
@@ -208,6 +274,11 @@ def main():
     choice = int(input("\nPick one for chords and progressions: "))
     root, name = scales[choice - 1]
     spelling = spell_scale(root, name)
+    if len(SCALES[name]) != 7:
+        print(f"\nChords that fit in {spelling[root]} {name}:")
+        for degree, chords in enumerate(fitting_chords(root, name), start=1):
+            print(f"  {degree}: {', '.join(chord_label(r, q, spelling) for r, q in chords) or '-'}")
+        return
     chords = [chord_label(r, q, spelling) for r, q in scale_chords(root, name)]
 
     print(f"\nChords in {spelling[root]} {name}:")
