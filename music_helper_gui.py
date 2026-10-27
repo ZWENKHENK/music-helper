@@ -23,7 +23,7 @@ from music_helper import (
     shape_text,
     spell_scale,
 )
-from sound import Player, voice
+from sound import INSTRUMENTS, MidiPlayer, Player, midi_outputs, voice
 
 # Dark theme colours
 BG = "#1e1f22"
@@ -70,6 +70,8 @@ FRET_MARKERS = [3, 5, 7, 9]
 
 CHORD_HINT = "Click a chord name to show it on the piano and guitar."
 ALL_SCALES = "All scales"
+BUILT_IN_SYNTH = "Built-in synth"
+WINDOWS_SYNTH = "Microsoft GS Wavetable Synth"  # Windows' own General MIDI synth, used by default when present
 PIANO_START = 60  # the piano's lowest C is middle C
 LOWEST_STRING = 40  # E2, a guitar's low E; other tunings put their lowest string as near to this as possible
 CHORD_LENGTH, SCALE_STEP, PROGRESSION_STEP = 1.6, 0.3, 0.9  # seconds
@@ -97,7 +99,9 @@ class MusicHelperApp(tk.Tk):
         self.shapes = []  # guitar shapes for the selected chord, low string first
         self.shape_index = None  # which shape is on the neck; None shows every position
         self.shapes_key = None  # (chord, tuning) the shapes were found for
-        self.player = Player()
+        self.synth = Player()
+        self.player = self.synth
+        self.midi_outputs = midi_outputs()  # {name: device number}
         self.play_on_click = tk.BooleanVar(value=True)
         self.setup_theme()
 
@@ -121,6 +125,21 @@ class MusicHelperApp(tk.Tk):
         ttk.Button(entry_row, text="Clear", command=self.clear).grid(row=0, column=3, padx=(6, 0))
         ttk.Button(entry_row, text="▶ Play", command=self.play_notes).grid(row=0, column=4, padx=(6, 0))
         ttk.Checkbutton(entry_row, text="Play on click", variable=self.play_on_click).grid(row=0, column=5, padx=(10, 0))
+
+        sound_row = ttk.Frame(entry_row)
+        sound_row.grid(row=1, column=0, columnspan=6, sticky="w", pady=(8, 0))
+        ttk.Label(sound_row, text="Sound:").pack(side="left", padx=(0, 6))
+        self.output_var = tk.StringVar(value=WINDOWS_SYNTH if WINDOWS_SYNTH in self.midi_outputs else BUILT_IN_SYNTH)
+        output_box = ttk.Combobox(sound_row, textvariable=self.output_var, state="readonly", width=30,
+                                  values=[BUILT_IN_SYNTH, *self.midi_outputs])
+        output_box.pack(side="left")
+        output_box.bind("<<ComboboxSelected>>", lambda e: self.set_output())
+        ttk.Label(sound_row, text="Instrument:").pack(side="left", padx=(14, 6))
+        self.instrument_var = tk.StringVar(value="Acoustic Grand Piano")
+        self.instrument_box = ttk.Combobox(sound_row, textvariable=self.instrument_var, state="readonly", width=24,
+                                           values=list(INSTRUMENTS), height=25)
+        self.instrument_box.pack(side="left")
+        self.instrument_box.bind("<<ComboboxSelected>>", lambda e: self.set_instrument())
 
         self.error_var = tk.StringVar()
         ttk.Label(main, textvariable=self.error_var, foreground=ERROR).grid(row=1, column=0, columnspan=2, sticky="w", pady=4)
@@ -226,6 +245,13 @@ class MusicHelperApp(tk.Tk):
         self.render_results()
         self.draw_visuals()
         self.use_dark_title_bar()
+        self.set_output(preview=False)
+        self.protocol("WM_DELETE_WINDOW", self.on_close)
+
+    def on_close(self):
+        self.stop_animation()
+        self.player.close()
+        self.destroy()
 
     # --- Theme ---
 
@@ -241,8 +267,8 @@ class MusicHelperApp(tk.Tk):
         for widget in ("TEntry", "TCombobox"):
             style.configure(widget, fieldbackground=PANEL, background=PANEL, insertcolor=FG,
                             lightcolor=PANEL, darkcolor=PANEL, arrowcolor=FG)
-            style.map(widget, bordercolor=[("focus", NOTE_COLOR)], fieldbackground=[("readonly", PANEL)],
-                      background=[("active", HOVER)], lightcolor=[("focus", PANEL)])
+            style.map(widget, bordercolor=[("focus", NOTE_COLOR)], fieldbackground=[("disabled", BG), ("readonly", PANEL)],
+                      foreground=[("disabled", MUTED)], background=[("active", HOVER)], lightcolor=[("focus", PANEL)])
         style.configure("TCheckbutton", indicatorbackground=PANEL, indicatorforeground="white", upperbordercolor=BORDER, lowerbordercolor=BORDER)
         style.map("TCheckbutton", background=[("active", BG)], indicatorbackground=[("selected", NOTE_COLOR)])
         style.configure("Vertical.TScrollbar", background=PANEL, lightcolor=PANEL, darkcolor=PANEL, arrowcolor=MUTED)
@@ -536,6 +562,33 @@ class MusicHelperApp(tk.Tk):
         self.play([(j * 0.04, p, CHORD_LENGTH) for j, p in enumerate(pitches)])
 
     # --- Playback ---
+
+    def set_output(self, preview=True):
+        """Switch between the built-in synth and a MIDI output, falling back to the synth if it can't be opened."""
+        self.stop_animation()
+        if self.player is not self.synth:
+            self.player.close()
+        self.player = self.synth
+        name = self.output_var.get()
+        if name != BUILT_IN_SYNTH:
+            try:
+                self.player = MidiPlayer(self.midi_outputs[name], INSTRUMENTS[self.instrument_var.get()])
+            except OSError as error:
+                self.error_var.set(f"Couldn't open {name}: {error}. Using the built-in synth.")
+                self.output_var.set(BUILT_IN_SYNTH)
+        # The built-in synth has one sound; instruments only apply to MIDI
+        self.instrument_box.state(["disabled"] if self.player is self.synth else ["!disabled"])
+        if preview:
+            self.play_preview()
+
+    def set_instrument(self):
+        self.player.set_program(INSTRUMENTS[self.instrument_var.get()])
+        self.play_preview()
+
+    def play_preview(self):
+        """Strum a C major chord so a newly picked sound can be heard."""
+        if self.play_on_click.get():
+            self.play([(i * 0.04, p, CHORD_LENGTH) for i, p in enumerate([48, 55, 60, 64, 67])])
 
     def play(self, events):
         """Play a sound, cutting off any progression that is still being followed on screen."""

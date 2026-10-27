@@ -31,7 +31,9 @@ When a chord is selected, the guitar neck shows a playable shape for it in the c
 
 ### Sound
 
-Clicking a piano key, a fret or a chord name plays it (untick **Play on click** to turn that off). **▶ Play** plays your notes, **▶ Play scale** plays the selected scale, and the ▶ in front of each progression plays it. Sound needs no extra libraries: it uses `winsound` on Windows, `afplay` on macOS and `paplay`/`aplay` on Linux.
+Clicking a piano key, a fret or a chord name plays it (untick **Play on click** to turn that off). **▶ Play** plays your notes, **▶ Play scale** plays the selected scale, and the ▶ in front of each progression plays it. The **Sound** dropdown picks where sound goes. On Windows it defaults to the built-in Microsoft GS Wavetable Synth, a General MIDI synth, and the **Instrument** dropdown chooses from 25 instruments (pianos, guitars, organs, strings, brass, pads...). Any other MIDI output, such as a hardware synth or a virtual port into a DAW, is listed too. **Built-in synth** is the app's own simple tone.
+
+Sound needs no extra libraries: MIDI goes through Windows' `winmm`, and the built-in synth uses `winsound` on Windows, `afplay` on macOS and `paplay`/`aplay` on Linux.
 
 ## Building the .exe
 
